@@ -3032,6 +3032,8 @@
                                 </div>
                                 <div class="total-item">GPM: <span id="all-overall-gpm">0.00%</span><button id="edit-gpm-totals"
                                         class="edit-icon" aria-label="Edit GPM totals">✏️</button></div>
+                                <div class="total-item">Labor Hours: <span id="all-overall-labor-hours">0.00</span></div>
+                                <div class="total-item">Inspection Hours: <span id="all-overall-inspection-hours">0.00</span></div>
                             </div>
                         </div>
                     <div id="update-screen" role="dialog" aria-modal="false" aria-labelledby="update-title">
@@ -4774,6 +4776,64 @@
             return { totalSell: overallSell, totalCost: overallCost, gpm: overallGpm };
         }
 
+        // Calculate Total Labor Hours for a specific quote (sum of quantity for Labor products)
+        function calculateQuoteLaborHours(quoteId) {
+            const quoteIdStr = String(quoteId);
+            const isMultiPhase = quoteTypeMap[quoteIdStr] === 826080001;
+            let totalHours = 0;
+            const addLaborHours = (products) => {
+                (products || []).forEach(p => { totalHours += parseFloat(p.quantity) || 0; });
+            };
+            if (isMultiPhase && selectedProductsMapByGroup[quoteIdStr]) {
+                Object.keys(selectedProductsMapByGroup[quoteIdStr]).forEach(groupId => {
+                    addLaborHours(selectedProductsMapByGroup[quoteIdStr][groupId]?.['826080003']);
+                });
+            } else if (selectedProductsMap[quoteIdStr]) {
+                addLaborHours(selectedProductsMap[quoteIdStr]?.['826080003']);
+            }
+            return totalHours;
+        }
+
+        // Calculate Total Labor Hours across all quotes
+        function calculateAllQuotesLaborHours() {
+            let total = 0;
+            Object.keys(selectedProductsMap).forEach(quoteId => {
+                total += calculateQuoteLaborHours(quoteId);
+            });
+            return total;
+        }
+
+        // Calculate Inspection Hours for a specific quote: Sum of (Time × Quantity / 60) for T&I items
+        function calculateQuoteInspectionHours(quoteId) {
+            const quoteIdStr = String(quoteId);
+            const isMultiPhase = quoteTypeMap[quoteIdStr] === 826080001;
+            let totalHours = 0;
+            const addInspectionHours = (products) => {
+                (products || []).forEach(p => {
+                    const time = parseFloat(p.time) || 0;
+                    const qty = parseFloat(p.quantity) || 0;
+                    totalHours += (time * qty) / 60;
+                });
+            };
+            if (isMultiPhase && selectedProductsMapByGroup[quoteIdStr]) {
+                Object.keys(selectedProductsMapByGroup[quoteIdStr]).forEach(groupId => {
+                    addInspectionHours(selectedProductsMapByGroup[quoteIdStr][groupId]?.['826080004']);
+                });
+            } else if (selectedProductsMap[quoteIdStr]) {
+                addInspectionHours(selectedProductsMap[quoteIdStr]?.['826080004']);
+            }
+            return parseFloat(totalHours.toFixed(2));
+        }
+
+        // Calculate Inspection Hours across all quotes
+        function calculateAllQuotesInspectionHours() {
+            let total = 0;
+            Object.keys(selectedProductsMap).forEach(quoteId => {
+                total += calculateQuoteInspectionHours(quoteId);
+            });
+            return parseFloat(total.toFixed(2));
+        }
+
         // Render a single product row (helper function)
         // Helper function to get status text and style
         function getStatusDisplay(statecode) {
@@ -5650,7 +5710,7 @@
                             'imd_totalcost', 'imd_totalsell', 'imd_quotegpm',
                             'imd_equipmentcost', 'imd_equipmentsell', 'imd_equipmentgpm',
                             'imd_laborcost', 'imd_laborsell', 'imd_labor_gpm', 'imd_laborhours',
-                            'imd_testinspectcost', 'imd_testinspectsell', 'imd_testinspectgpm',
+                            'imd_testinspectcost', 'imd_testinspectsell', 'imd_testinspectgpm', 'imd_inspectionhours',
                             'imd_chargeableitemscost', 'imd_chargeableitemssell', 'imd_chargeableitemsgpm',
                             'imd_contractor_sell', 'imd_contractorcost', 'imd_contractorgpm',
                             'imd_othersell', 'imd_subscriptionamount',
@@ -9280,6 +9340,8 @@
                         }
                     });
                     
+                    const quoteLaborHrs = calculateQuoteLaborHours(quoteId);
+                    const quoteInspectionHrs = calculateQuoteInspectionHours(quoteId);
                     quoteTotalsSection.innerHTML = `
                         <h3>${quoteData.quoteName}</h3>
                         <div class="quote-totals-grid">
@@ -9289,6 +9351,8 @@
                                     <div class="total-item" style="margin: 0;">Cost: <span style="font-weight: 600;" class="quote-overall-cost">$${formatNumber(quoteOverallTotals.totalCost)}</span></div>
                                     <div class="total-item" style="margin: 0;">Sell: <span style="font-weight: 600;" class="quote-overall-sell">$${formatNumber(quoteOverallTotals.totalSell)}</span><button class="edit-icon edit-quote-overall-sell" data-quoteid="${quoteId}" aria-label="Edit overall sell total">✏️</button></div>
                                     <div class="total-item" style="margin: 0;">GPM: <span style="font-weight: 600;" class="quote-overall-gpm">${formatGPM(quoteOverallTotals.gpm)}%</span><button class="edit-icon edit-quote-overall-gpm" data-quoteid="${quoteId}" aria-label="Edit overall GPM">✏️</button></div>
+                                    <div class="total-item" style="margin: 0;">Labor Hours: <span style="font-weight: 600;" class="quote-labor-hours">${formatNumber(quoteLaborHrs)}</span></div>
+                                    <div class="total-item" style="margin: 0;">Inspection Hours: <span style="font-weight: 600;" class="quote-inspection-hours">${formatNumber(quoteInspectionHrs)}</span></div>
                                 </div>
                             </div>
                             ${categoryTotalsHTML}
@@ -9397,10 +9461,20 @@
                             const costTotal = typeTotals?.totalCost || 0;
                             const sellTotal = typeTotals?.totalSell || 0;
                             const gpm = typeTotals?.gpm || '0.00';
+                            let extraTotals = '';
+                            if (String(productType) === '826080003') {
+                                const laborHrs = typeProducts.reduce((sum, p) => sum + (parseFloat(p.quantity) || 0), 0);
+                                extraTotals = `<div class="total-item" style="margin: 0;">Labor Hours: <span class="summary-labor-hours">${formatNumber(laborHrs)}</span></div>`;
+                            }
+                            if (String(productType) === '826080004') {
+                                const inspHrs = typeProducts.reduce((sum, p) => sum + ((parseFloat(p.time) || 0) * (parseFloat(p.quantity) || 0)) / 60, 0);
+                                extraTotals = `<div class="total-item" style="margin: 0;">Inspection Hours: <span class="summary-inspection-hours">${formatNumber(parseFloat(inspHrs.toFixed(2)))}</span></div>`;
+                            }
                             totalsBox.innerHTML = `
                                 <div class="total-item" style="margin: 0;">Cost Total: <span class="summary-cost-total">$${formatNumber(costTotal)}</span></div>
                                 <div class="total-item" style="margin: 0;">Sell Total: <span class="summary-sell-total">$${formatNumber(sellTotal)}</span></div>
                                 <div class="total-item" style="margin: 0;">GPM: <span class="summary-gpm-total">${formatGPM(gpm)}%</span></div>
+                                ${extraTotals}
                             `;
                         }
                         
@@ -9592,6 +9666,8 @@
                         `;
                     }
                     
+                    const catLaborHrs = calculateQuoteLaborHours(quoteId);
+                    const catInspectionHrs = calculateQuoteInspectionHours(quoteId);
                     quoteTotalsSection.innerHTML = `
                         <h3>${quoteName}</h3>
                         <div class="quote-totals-grid">
@@ -9602,6 +9678,8 @@
                                     <div class="total-item" style="margin: 0;">Cost: <span style="font-weight: 600;" class="quote-overall-cost">$${formatNumber(quoteOverallTotals.totalCost)}</span></div>
                                     <div class="total-item" style="margin: 0;">Sell: <span style="font-weight: 600;" class="quote-overall-sell">$${formatNumber(quoteOverallTotals.totalSell)}</span><button class="edit-icon edit-quote-overall-sell" data-quoteid="${quoteId}" aria-label="Edit overall sell total">✏️</button></div>
                                     <div class="total-item" style="margin: 0;">GPM: <span style="font-weight: 600;" class="quote-overall-gpm">${formatGPM(quoteOverallTotals.gpm)}%</span><button class="edit-icon edit-quote-overall-gpm" data-quoteid="${quoteId}" aria-label="Edit overall GPM">✏️</button></div>
+                                    <div class="total-item" style="margin: 0;">Labor Hours: <span style="font-weight: 600;" class="quote-labor-hours">${formatNumber(catLaborHrs)}</span></div>
+                                    <div class="total-item" style="margin: 0;">Inspection Hours: <span style="font-weight: 600;" class="quote-inspection-hours">${formatNumber(catInspectionHrs)}</span></div>
                                 </div>
                             </div>
                         </div>
@@ -9924,6 +10002,8 @@
                         `;
                     }
                     
+                    const mpLaborHrs = calculateQuoteLaborHours(quoteId);
+                    const mpInspectionHrs = calculateQuoteInspectionHours(quoteId);
                     quoteTotalsSection.innerHTML = `
                         <h3>${quoteData.quoteName}</h3>
                         <div class="quote-totals-grid">
@@ -9934,6 +10014,8 @@
                                     <div class="total-item" style="margin: 0;">Cost: <span style="font-weight: 600;" class="quote-overall-cost">$${formatNumber(quoteOverallTotals.totalCost)}</span></div>
                                     <div class="total-item" style="margin: 0;">Sell: <span style="font-weight: 600;" class="quote-overall-sell">$${formatNumber(quoteOverallTotals.totalSell)}</span><button class="edit-icon edit-quote-overall-sell" data-quoteid="${quoteId}" aria-label="Edit overall sell total">✏️</button></div>
                                     <div class="total-item" style="margin: 0;">GPM: <span style="font-weight: 600;" class="quote-overall-gpm">${formatGPM(quoteOverallTotals.gpm)}%</span><button class="edit-icon edit-quote-overall-gpm" data-quoteid="${quoteId}" aria-label="Edit overall GPM">✏️</button></div>
+                                    <div class="total-item" style="margin: 0;">Labor Hours: <span style="font-weight: 600;" class="quote-labor-hours">${formatNumber(mpLaborHrs)}</span></div>
+                                    <div class="total-item" style="margin: 0;">Inspection Hours: <span style="font-weight: 600;" class="quote-inspection-hours">${formatNumber(mpInspectionHrs)}</span></div>
                                 </div>
                             </div>
                         </div>
@@ -10199,6 +10281,8 @@
                     `;
                 }
                 
+                const regLaborHrs = calculateQuoteLaborHours(quoteId);
+                const regInspectionHrs = calculateQuoteInspectionHours(quoteId);
                 quoteTotalsSection.innerHTML = `
                     <h3>${quoteData.quoteName}</h3>
                     <div class="quote-totals-grid">
@@ -10209,6 +10293,8 @@
                                 <div class="total-item" style="margin: 0;">Cost: <span style="font-weight: 600;" class="quote-overall-cost">$${formatNumber(quoteOverallTotals.totalCost)}</span></div>
                                 <div class="total-item" style="margin: 0;">Sell: <span style="font-weight: 600;" class="quote-overall-sell">$${formatNumber(quoteOverallTotals.totalSell)}</span><button class="edit-icon edit-quote-overall-sell" data-quoteid="${quoteId}" aria-label="Edit overall sell total">✏️</button></div>
                                 <div class="total-item" style="margin: 0;">GPM: <span style="font-weight: 600;" class="quote-overall-gpm">${formatGPM(quoteOverallTotals.gpm)}%</span><button class="edit-icon edit-quote-overall-gpm" data-quoteid="${quoteId}" aria-label="Edit overall GPM">✏️</button></div>
+                                <div class="total-item" style="margin: 0;">Labor Hours: <span style="font-weight: 600;" class="quote-labor-hours">${formatNumber(regLaborHrs)}</span></div>
+                                <div class="total-item" style="margin: 0;">Inspection Hours: <span style="font-weight: 600;" class="quote-inspection-hours">${formatNumber(regInspectionHrs)}</span></div>
                             </div>
                         </div>
                     </div>
@@ -11063,6 +11149,10 @@
             if (overallCostEl) overallCostEl.textContent = `$${formatNumber(quoteOverallTotals.totalCost)}`;
             if (overallSellEl) overallSellEl.textContent = `$${formatNumber(quoteOverallTotals.totalSell)}`;
             if (overallGpmEl) overallGpmEl.textContent = `${formatGPM(quoteOverallTotals.gpm)}%`;
+            const laborHrsEl = quoteWrapper.querySelector('.quote-labor-hours');
+            const inspectionHrsEl = quoteWrapper.querySelector('.quote-inspection-hours');
+            if (laborHrsEl) laborHrsEl.textContent = formatNumber(calculateQuoteLaborHours(quoteId));
+            if (inspectionHrsEl) inspectionHrsEl.textContent = formatNumber(calculateQuoteInspectionHours(quoteId));
 
             // Summary tab: update per-category totals boxes inside each category header
             // (and per-phase totals for multi-phase quotes).
@@ -11108,6 +11198,8 @@
                     });
                     
                     // Rebuild only the grid contents (keep quote name and section wrapper).
+                    const refreshLaborHrs = calculateQuoteLaborHours(quoteId);
+                    const refreshInspectionHrs = calculateQuoteInspectionHours(quoteId);
                     quoteTotalsGrid.innerHTML = `
                         <div class="quote-totals-box">
                             <h4>Overall Totals</h4>
@@ -11115,6 +11207,8 @@
                                 <div class="total-item" style="margin: 0;">Cost: <span style="font-weight: 600;" class="quote-overall-cost">$${formatNumber(quoteOverallTotals.totalCost)}</span></div>
                                 <div class="total-item" style="margin: 0;">Sell: <span style="font-weight: 600;" class="quote-overall-sell">$${formatNumber(quoteOverallTotals.totalSell)}</span><button class="edit-icon edit-quote-overall-sell" data-quoteid="${quoteId}" aria-label="Edit overall sell total">✏️</button></div>
                                 <div class="total-item" style="margin: 0;">GPM: <span style="font-weight: 600;" class="quote-overall-gpm">${formatGPM(quoteOverallTotals.gpm)}%</span><button class="edit-icon edit-quote-overall-gpm" data-quoteid="${quoteId}" aria-label="Edit overall GPM">✏️</button></div>
+                                <div class="total-item" style="margin: 0;">Labor Hours: <span style="font-weight: 600;" class="quote-labor-hours">${formatNumber(refreshLaborHrs)}</span></div>
+                                <div class="total-item" style="margin: 0;">Inspection Hours: <span style="font-weight: 600;" class="quote-inspection-hours">${formatNumber(refreshInspectionHrs)}</span></div>
                             </div>
                         </div>
                         ${categoryTotalsHTML}
@@ -11145,6 +11239,10 @@
                         if (costSpan) costSpan.textContent = `$${formatNumber(totals.totalCost || 0)}`;
                         if (sellSpan) sellSpan.textContent = `$${formatNumber(totals.totalSell || 0)}`;
                         if (gpmSpan) gpmSpan.textContent = `${formatGPM(totals.gpm || '0.00')}%`;
+                        const laborHrsSpan = el.querySelector('.summary-labor-hours');
+                        if (laborHrsSpan) laborHrsSpan.textContent = formatNumber(calculateQuoteLaborHours(quoteId));
+                        const inspHrsSpan = el.querySelector('.summary-inspection-hours');
+                        if (inspHrsSpan) inspHrsSpan.textContent = formatNumber(calculateQuoteInspectionHours(quoteId));
                     }
                 });
             }
@@ -11327,6 +11425,8 @@
             document.getElementById('all-overall-cost').textContent = `$${formatNumber(allOverallTotals.totalCost)}`;
             document.getElementById('all-overall-sell').textContent = `$${formatNumber(allOverallTotals.totalSell)}`;
             document.getElementById('all-overall-gpm').textContent = `${formatGPM(allOverallTotals.gpm)}%`;
+            document.getElementById('all-overall-labor-hours').textContent = formatNumber(calculateAllQuotesLaborHours());
+            document.getElementById('all-overall-inspection-hours').textContent = formatNumber(calculateAllQuotesInspectionHours());
             console.log('[Totals] Totals section rendered (after swap)');
             
             // Update current category totals
@@ -11985,6 +12085,10 @@
                 tab.setAttribute('aria-selected', 'true');
                 tab.tabIndex = 0;
                 activeProductType = tab.dataset.producttype;
+                const searchInput = document.getElementById('search');
+                if (searchInput && searchInput.value.trim() !== '') {
+                    searchInput.value = '';
+                }
                 populateCart();
                 updateTabCounts();
             });
@@ -13043,6 +13147,9 @@
                     ? ((overallSell - overallCost) / overallSell * 100).toFixed(2)
                     : '0.00';
                 const laborQuantitySum = quoteProducts.filter(p => p.productType == '826080003').reduce((sum, p) => sum + (p.quantity || 0), 0);
+                const inspectionHoursSum = parseFloat(quoteProducts.filter(p => p.productType == '826080004').reduce((sum, p) => {
+                    return sum + ((parseFloat(p.time) || 0) * (parseFloat(p.quantity) || 0)) / 60;
+                }, 0).toFixed(2));
                 // Chargeable items logic
                 // Split Chargeable totals by type:
                 // - Type = Other       -> imd_chargeableitemssell / imd_chargeableitemscost / imd_chargeableitemsgpm
@@ -13156,6 +13263,7 @@
                     "imd_laborsell": safeParseFloat(laborSell),
                     "imd_labor_gpm": safeParseFloat(laborGpm),
                     "imd_laborhours": safeParseFloat(laborQuantitySum),
+                    "imd_inspectionhours": safeParseFloat(inspectionHoursSum),
                     "imd_testinspectcost": safeParseFloat(testCost),
                     "imd_testinspectsell": safeParseFloat(testSell),
                     "imd_testinspectgpm": safeParseFloat(testGpm),
