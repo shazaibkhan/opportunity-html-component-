@@ -4880,7 +4880,7 @@
                     ${selectCell}
                     <td role="cell"><div title="${product.name}">${product.name}</div></td>
                     <td role="cell" title="${product.description || 'N/A'}"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter product description" ${readonlyAttr}></div></td>
-                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} value="${product.quantity}" aria-label="Quantity" title="Number of subscription units" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of subscription units" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="total-subscription-input" data-field="totalSubscription" value="${formatNumber(product.totalSubscription)}" aria-label="Total Subscription" title="Total subscription amount" ${readonlyAttr}></div></td>
                     <td role="cell"><div class="total-monthly">$${totalMonthly}</div></td>
@@ -4918,7 +4918,7 @@
                     ${selectCell}
                     <td role="cell"><div><input type="text" class="name-input" data-field="name" value="${product.name}" aria-label="Name" title="Enter item name" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter item description" ${readonlyAttr}></div></td>
-                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} value="${product.quantity}" aria-label="Quantity" title="Number of units" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of units" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="cost-input" data-field="cost" value="${formatNumber(product.costPrice)}" aria-label="Unit Cost" title="Unit cost price" ${readonlyAttr}></div></td>
                     <td role="cell"><div class="ext-cost">$${extCost}</div></td>
@@ -4962,6 +4962,9 @@
                 const disabledAttr = isReadonly ? 'disabled' : '';
                 const selectCell = isReadonly ? '' : `<td role="cell"><input type="checkbox" aria-label="Select test item" title="Select this test item" ${disabledAttr}></td>`;
                 const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
+                const extSellRaw = parseFloat(extSell.toString().replace(/,/g, '')) || 0;
+                const qty = parseFloat(product.quantity) || 0;
+                const pricePerUnit = qty > 0 ? extSellRaw / qty : 0;
                 row.innerHTML = `
                     ${selectCell}
                     <td role="cell"><div title="${product.name}">${product.name}</div></td>
@@ -4973,7 +4976,7 @@
                     <td role="cell"><div><input type="number" class="totest-input" data-field="totest" min="0" max="100" value="${product.toTest || 100}" aria-label="% to Test" title="Percentage of items to test (0-100)" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="text" class="cost-input" data-field="cost" value="${formatNumber(product.costPrice)}" aria-label="Unit Cost" title="Unit cost for testing" ${readonlyAttr}></div></td>
                     <td role="cell"><div class="ext-cost">$${extCost}</div></td>
-                    <td role="cell"><div><input type="text" class="sell-input" data-field="sell" value="${formatNumber(product.sellPrice)}" aria-label="Unit Sell" title="Unit selling price for testing" ${readonlyAttr}></div></td>
+                    <td role="cell"><div class="price-per-unit">$${formatNumber(pricePerUnit)}</div></td>
                     <td role="cell"><div class="ext-sell">$${extSell}</div></td>
                     <td role="cell"><div><input type="number" class="gpm-input" data-field="gpm" step="0.01" max="99.99" value="${formatGPM(gpm)}" aria-label="GPM" title="Gross Profit Margin percentage (0-99.99)" ${readonlyAttr}> %</div></td>
                     <td role="cell"><div><input type="checkbox" class="taxable-input" data-field="msdyn_taxable" ${isTaxable ? 'checked' : ''} aria-label="Taxable" title="Check if this test is taxable" ${disabledAttr}></div></td>
@@ -4992,7 +4995,7 @@
                     ${selectCell}
                     <td role="cell"><div title="${product.name}">${product.name}</div></td>
                     <td role="cell" title="${product.description || 'N/A'}"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter product description" ${readonlyAttr}></div></td>
-                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} value="${product.quantity}" aria-label="Quantity" title="Number of units" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of units" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="sell-input" data-field="sell" value="${formatNumber(product.sellPrice)}" aria-label="Sell" title="Unit selling price" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="number" class="gpm-input" data-field="gpm" step="0.01" max="99.99" value="${formatGPM(gpm)}" aria-label="GPM" title="Gross Profit Margin percentage (0-99.99)" ${readonlyAttr}> %</div></td>
@@ -9191,7 +9194,7 @@
                     <th scope="col" role="columnheader">% to Test</th>
                     <th scope="col" role="columnheader">Unit Cost</th>
                     <th scope="col" role="columnheader">Ext Cost</th>
-                    <th scope="col" role="columnheader">Unit Sell</th>
+                    <th scope="col" role="columnheader">Price Per Unit</th>
                     <th scope="col" role="columnheader">Ext Sell</th>
                     <th scope="col" role="columnheader">GPM</th>
                     <th scope="col" role="columnheader">Taxable?</th>
@@ -10821,11 +10824,9 @@
                     const qtyVal = String(input.value || '').trim();
                     let newQuantity;
                     if (isDeductiveQuote) {
-                        // Allow negative values for deductive quotes
-                        newQuantity = qtyVal === '' ? 0 : (isNaN(parseFloat(qtyVal)) ? 0 : parseFloat(qtyVal));
+                        newQuantity = qtyVal === '' ? 0 : (isNaN(parseInt(qtyVal)) ? 0 : parseInt(qtyVal));
                     } else {
-                        // For non-deductive quotes, ensure quantity is at least 1
-                        newQuantity = qtyVal === '' ? 1 : Math.max(1, parseFloat(qtyVal) || 1);
+                        newQuantity = qtyVal === '' ? 1 : Math.max(1, parseInt(qtyVal) || 1);
                     }
                     if (product.quantity !== newQuantity) {
                         product.quantity = newQuantity;
@@ -10893,14 +10894,14 @@
                 if (field == 'quantity') {
                     const quantityVal = String(input.value || '').trim();
                     let quantity;
+                    const wholeNumberTypes = ['826080000', '826080001'];
+                    const useWholeNumber = wholeNumberTypes.includes(String(rowProductType));
                     if (isDeductiveQuote) {
-                        // Allow negative values for deductive quotes
                         quantity = quantityVal === '' ? 0 : (isNaN(parseFloat(quantityVal)) ? 0 : parseFloat(quantityVal));
                     } else {
-                        // For non-deductive quotes, ensure quantity is at least 0
                         quantity = quantityVal === '' ? 0 : Math.max(0, parseFloat(quantityVal) || 0);
                     }
-                    // Only update if value actually changed to prevent infinite loops
+                    if (useWholeNumber) quantity = Math.round(quantity);
                     if (product.quantity !== quantity) {
                         product.quantity = quantity;
                     }
@@ -10981,6 +10982,12 @@
                     const el = row.querySelector('.ext-cost');
                     el.textContent = `$${extCostVal}`;
                     setTooltip(el, `$${extCostVal}`);
+                }
+                if (rowProductType == 826080004 && row.querySelector('.price-per-unit')) {
+                    const extSellRaw = parseFloat(extSellVal.toString().replace(/,/g, '')) || 0;
+                    const qty = parseFloat(product.quantity) || 0;
+                    const ppu = qty > 0 ? extSellRaw / qty : 0;
+                    row.querySelector('.price-per-unit').textContent = `$${formatNumber(ppu)}`;
                 }
                 // Only update inputs that are not currently being edited
                 const gpmInput = row.querySelector('.gpm-input');
