@@ -11516,7 +11516,7 @@
                         if (!qty) return;
                         const oldExt = p.sellPrice * qty;
                                     const newExt = oldExt * laborRatio;
-                        p.sellPrice = parseFloat(Math.max(0, newExt / qty).toFixed(2));
+                        p.sellPrice = parseFloat(Math.max(0, newExt / qty).toFixed(8));
                                     p.gpm = calculateGPM(p.sellPrice, p.costPrice);
                                     p.isDirty = true;
                         });
@@ -11540,7 +11540,7 @@
                             if (!qty) return;
                             const oldExt = p.sellPrice * qty;
                                         const newExt = oldExt * otherRatio;
-                            p.sellPrice = parseFloat(Math.max(0, newExt / qty).toFixed(2));
+                            p.sellPrice = parseFloat(Math.max(0, newExt / qty).toFixed(8));
                                         p.gpm = calculateGPM(p.sellPrice, p.costPrice);
                                         p.isDirty = true;
                             });
@@ -11564,7 +11564,7 @@
                             if (!qty) return;
                             const oldExt = p.sellPrice * qty;
                                         const newExt = oldExt * checkedRatio;
-                            p.sellPrice = parseFloat(Math.max(0, newExt / qty).toFixed(2));
+                            p.sellPrice = parseFloat(Math.max(0, newExt / qty).toFixed(8));
                                         p.gpm = calculateGPM(p.sellPrice, p.costPrice);
                                         p.isDirty = true;
                             });
@@ -12135,6 +12135,153 @@
             
             return equipmentProducts;
         }
+
+        /**
+         * Proportionally redistributes an edited Quote Total Sell across ALL existing (non-subscription) line items
+         * on that quote so that Sum(Extended Sell) matches the edited total EXACTLY.
+         *
+         * Proportional formula (per line i):
+         *   newExt_i_raw = oldExt_i * (targetTotal / oldTotal)
+         *
+         * We implement this in integer cents and use a "largest remainder" approach to ensure exact matching:
+         * - base_i = floor(newExt_i_raw_in_cents)
+         * - remainderCents = targetCents - sum(base_i)
+         * - give +1 cent to the lines with the largest fractional remainder until remainderCents = 0
+         *
+         * Safeguards:
+         * - Unit Sell is never allowed to go below 0
+         * - Unit Sell may go below Unit Cost (allowed by requirement)
+         * - Lines with non-positive multipliers (e.g., qty=0) are treated as weight 0 and are not adjusted
+         * - If oldTotal is 0, we distribute by multiplier weight (qty or test multiplier); if all weights are 0, we do nothing
+         *
+         * Note: Quote "overall sell" in this UI excludes Subscription (826080002), so we only adjust the same set.
+         */
+        function redistributeQuoteLineItemsToTargetTotalSell(quoteIdStr, targetTotalSellDollars) {
+            const toCents = (amount) => {
+                const n = Number(amount);
+                if (!isFinite(n)) return 0;
+                return Math.round(n * 100);
+            };
+            const clampNonNegative = (n) => (n < 0 ? 0 : n);
+
+            // Build a flat list of adjustable lines (non-subscription) for this quote.
+            const isMultiPhase = quoteTypeMap[quoteIdStr] === 826080001;
+            const lines = [];
+
+            const pushLine = (p, type) => {
+                if (!p) return;
+                // Exclude Subscription from quote overall sell redistribution.
+                if (String(type) === '826080002') return;
+
+                const qty = parseFloat(p.quantity) || 0;
+                const sellPrice = parseFloat(p.sellPrice) || 0;
+
+                let multiplier = 0;
+                if (String(type) === '826080004') {
+                    // Test & Inspect uses a multiplier rather than qty.
+                    const percentToTest = (parseFloat(p.toTest) || 100) / 100;
+                    multiplier = qty * percentToTest * (parseFloat(p.annual) || 1) * (parseFloat(p.time) || 0);
+                } else {
+                    multiplier = qty;
+                }
+
+                // Non-positive multipliers cannot contribute to ext sell; skip from redistribution.
+                if (!isFinite(multiplier) || multiplier <= 0) return;
+
+                const oldExtCents = toCents(multiplier * sellPrice);
+                lines.push({
+                    p,
+                    type: String(type),
+                    multiplier,
+                    oldExtCents: clampNonNegative(oldExtCents),
+                    // Used for "largest remainder" distribution
+                    fractional: 0,
+                    newExtCents: 0
+                });
+            };
+
+            if (isMultiPhase && selectedProductsMapByGroup[quoteIdStr]) {
+                Object.keys(selectedProductsMapByGroup[quoteIdStr]).forEach(groupId => {
+                    const gp = selectedProductsMapByGroup[quoteIdStr][groupId];
+                    if (!gp) return;
+                    // Equipment includes bundles
+                    (gp['826080000'] || []).forEach(p => pushLine(p, '826080000'));
+                    (gp[BUNDLE_TYPE] || []).forEach(p => pushLine(p, '826080000'));
+                    (gp['826080003'] || []).forEach(p => pushLine(p, '826080003'));
+                    (gp['826080004'] || []).forEach(p => pushLine(p, '826080004'));
+                    (gp['826080001'] || []).forEach(p => pushLine(p, '826080001'));
+                });
+            } else {
+                const qp = selectedProductsMap[quoteIdStr] || {};
+                (qp['826080000'] || []).forEach(p => pushLine(p, '826080000'));
+                (qp[BUNDLE_TYPE] || []).forEach(p => pushLine(p, '826080000'));
+                (qp['826080003'] || []).forEach(p => pushLine(p, '826080003'));
+                (qp['826080004'] || []).forEach(p => pushLine(p, '826080004'));
+                (qp['826080001'] || []).forEach(p => pushLine(p, '826080001'));
+            }
+
+            if (lines.length === 0) return;
+
+            // Requirement says user-entered Total Sell is a whole number. Treat it as source-of-truth.
+            const targetDollarsWhole = Math.round(Number(targetTotalSellDollars) || 0);
+            const targetCents = clampNonNegative(targetDollarsWhole * 100);
+
+            const oldTotalCents = lines.reduce((sum, l) => sum + (l.oldExtCents || 0), 0);
+
+            // If everything is zero, proportional scaling is undefined; fall back to multiplier-weight distribution.
+            if (oldTotalCents <= 0) {
+                const totalWeight = lines.reduce((sum, l) => sum + (l.multiplier || 0), 0);
+                if (totalWeight <= 0) return;
+                let baseSum = 0;
+                lines.forEach(l => {
+                    const raw = (targetCents * (l.multiplier / totalWeight));
+                    const base = Math.floor(raw);
+                    l.fractional = raw - base;
+                    l.newExtCents = base;
+                    baseSum += base;
+                });
+                let remainder = targetCents - baseSum;
+                // Distribute remaining cents to the biggest fractional remainders.
+                lines.sort((a, b) => b.fractional - a.fractional);
+                for (let i = 0; i < lines.length && remainder > 0; i++) {
+                    lines[i].newExtCents += 1;
+                    remainder -= 1;
+                    if (i === lines.length - 1 && remainder > 0) i = -1; // loop again if needed
+                }
+            } else {
+                const ratio = targetCents / oldTotalCents;
+                let baseSum = 0;
+                lines.forEach(l => {
+                    const raw = l.oldExtCents * ratio;
+                    const base = Math.floor(raw);
+                    l.fractional = raw - base;
+                    l.newExtCents = clampNonNegative(base);
+                    baseSum += l.newExtCents;
+                });
+                let remainder = targetCents - baseSum;
+                // Ensure exact total matching by distributing rounding remainder in cents.
+                lines.sort((a, b) => b.fractional - a.fractional);
+                for (let i = 0; i < lines.length && remainder > 0; i++) {
+                    lines[i].newExtCents += 1;
+                    remainder -= 1;
+                    if (i === lines.length - 1 && remainder > 0) i = -1; // loop again if needed
+                }
+            }
+
+            // Apply new unit sell to each line with high internal precision (8 decimals).
+            // The UI always displays sellPrice via formatNumber() which rounds to 2 decimals,
+            // so the user sees clean values. The extra precision keeps the sum of all
+            // (multiplier * sellPrice) within ~0.0001 of the exact target, which formatNumber
+            // rounds to the correct 2-decimal total every time.
+            lines.forEach(l => {
+                const m = l.multiplier;
+                if (!isFinite(m) || m <= 0) return;
+                const unitSell = clampNonNegative((l.newExtCents / 100) / m);
+                l.p.sellPrice = parseFloat(unitSell.toFixed(8));
+                l.p.gpm = calculateGPM(l.p.sellPrice, l.p.costPrice);
+                l.p.isDirty = true;
+            });
+        }
         
         // Function to apply quote changes (similar to applyChanges but for individual quote)
         function applyQuoteChanges() {
@@ -12215,93 +12362,10 @@
                     alert('Invalid Sell Total value.');
                     return;
                 }
-                const delta = targetSell - window.quoteOldSell;
-                if (Math.abs(delta) < 0.01) {
-                    hideQuoteUpdateScreen();
-                    return;
-                }
-                
-                if (laborPctChange && hasLabor) {
-                    const laborCat = cats[laborType];
-                    if (laborCat.totalSell > 0) {
-                        const laborDelta = delta * laborPct;
-                        const laborRatio = 1 + laborDelta / laborCat.totalSell;
-                        const products = getProductsForType(laborType);
-                        products.forEach(p => {
-                            const oldExt = p.sellPrice * p.quantity;
-                            const newExt = oldExt * laborRatio;
-                            p.sellPrice = parseFloat(Math.max(0, newExt / p.quantity).toFixed(2));
-                            p.gpm = calculateGPM(p.sellPrice, p.costPrice);
-                            p.isDirty = true;
-                        });
-                        adjusted = true;
-                    }
-                    const remainDelta = delta * (1 - laborPct);
-                    const otherTypes = checkedTypes.filter(t => t !== laborType);
-                    const otherTotalSell = otherTypes.reduce((sum, t) => {
-                        if (t === '826080000') {
-                            return sum + (cats[t]?.totalSell || 0) + (cats[BUNDLE_TYPE]?.totalSell || 0);
-                        }
-                        return sum + (cats[t]?.totalSell || 0);
-                    }, 0);
-                    if (otherTotalSell > 0 && Math.abs(remainDelta) > 0.01) {
-                        const otherRatio = 1 + remainDelta / otherTotalSell;
-                        otherTypes.forEach(t => {
-                            const products = getProductsForType(t);
-                            products.forEach(p => {
-                                let oldExt, newExt;
-                                if (t === '826080004') {
-                                    const percentToTest = (p.toTest || 100) / 100;
-                                    const multiplier = p.quantity * percentToTest * (p.annual || 1) * (p.time || 0);
-                                    oldExt = multiplier * p.sellPrice;
-                                    newExt = oldExt * otherRatio;
-                                    if (multiplier > 0) {
-                                        p.sellPrice = parseFloat(Math.max(0, newExt / multiplier).toFixed(2));
-                                    }
-                                } else {
-                                    oldExt = p.sellPrice * p.quantity;
-                                    newExt = oldExt * otherRatio;
-                                    p.sellPrice = parseFloat(Math.max(0, newExt / p.quantity).toFixed(2));
-                                }
-                                p.gpm = calculateGPM(p.sellPrice, p.costPrice);
-                                p.isDirty = true;
-                            });
-                        });
-                        adjusted = true;
-                    }
-                } else {
-                    const checkedTotalSell = checkedTypes.reduce((sum, t) => {
-                        if (t === '826080000') {
-                            return sum + (cats[t]?.totalSell || 0) + (cats[BUNDLE_TYPE]?.totalSell || 0);
-                        }
-                        return sum + (cats[t]?.totalSell || 0);
-                    }, 0);
-                    if (checkedTotalSell > 0) {
-                        const checkedRatio = 1 + delta / checkedTotalSell;
-                        checkedTypes.forEach(t => {
-                            const products = getProductsForType(t);
-                            products.forEach(p => {
-                                let oldExt, newExt;
-                                if (t === '826080004') {
-                                    const percentToTest = (p.toTest || 100) / 100;
-                                    const multiplier = p.quantity * percentToTest * (p.annual || 1) * (p.time || 0);
-                                    oldExt = multiplier * p.sellPrice;
-                                    newExt = oldExt * checkedRatio;
-                                    if (multiplier > 0) {
-                                        p.sellPrice = parseFloat(Math.max(0, newExt / multiplier).toFixed(2));
-                                    }
-                                } else {
-                                    oldExt = p.sellPrice * p.quantity;
-                                    newExt = oldExt * checkedRatio;
-                                    p.sellPrice = parseFloat(Math.max(0, newExt / p.quantity).toFixed(2));
-                                }
-                                p.gpm = calculateGPM(p.sellPrice, p.costPrice);
-                                p.isDirty = true;
-                            });
-                        });
-                        adjusted = true;
-                    }
-                }
+                // Requirement: when user edits Quote Total Sell, redistribute across ALL EXISTING line items
+                // on that quote so Sum(Extended Sell) matches edited total exactly (no +/- 1 due to rounding).
+                redistributeQuoteLineItemsToTargetTotalSell(quoteIdStr, targetSell);
+                adjusted = true;
             } else {
                 const newGpm = parseFloat(document.getElementById('quote-new-gpm').value);
                 if (isNaN(newGpm) || newGpm < 0 || newGpm > 100) {
