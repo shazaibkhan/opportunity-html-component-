@@ -3339,7 +3339,7 @@
         function populateSelectedSummary() {
             const tbody = document.getElementById('selected-mini-table').querySelector('tbody');
             tbody.innerHTML = '';
-            let totalSell = 0;
+            let totalCostSum = 0;
             let totalCount = 0;
             
             // Check if current quote is multi-phase
@@ -3399,19 +3399,15 @@
                                 let unitCostDisplay = (product.costPrice != null && product.costPrice !== undefined)
                                     ? `$${formatNumber(product.costPrice)}`
                                     : 'NA';
-                                let extSell = 0;
-                                if (product.productType == 826080002) {
-                                    const totalSubscription = parseFloat(product.totalSubscription) || 0;
-                                    const quantity = parseFloat(product.quantity) || 0;
-                                    extSell = totalSubscription * quantity;
-                                } else if (product.productType == 826080004) {
+                                let extCost = 0;
+                                if (product.productType == 826080004) {
                                     const percentToTest = (product.toTest || 100) / 100;
                                     const multiplier = product.quantity * percentToTest * (product.annual || 1) * (product.time || 0);
-                                    extSell = multiplier * product.sellPrice;
+                                    extCost = multiplier * (parseFloat(product.costPrice) || 0);
                                 } else {
-                                    extSell = product.sellPrice * product.quantity;
+                                    extCost = (parseFloat(product.costPrice) || 0) * (parseFloat(product.quantity) || 0);
                                 }
-                                totalSell += extSell;
+                                totalCostSum += extCost;
                                 totalCount++;
                                 const row = document.createElement('tr');
                                 row.innerHTML = `
@@ -3452,19 +3448,15 @@
                         let unitCostDisplay = (product.costPrice != null && product.costPrice !== undefined)
                             ? `$${formatNumber(product.costPrice)}`
                             : 'NA';
-                        let extSell = 0;
-                        if (product.productType == 826080002) {
-                            const totalSubscription = parseFloat(product.totalSubscription) || 0;
-                            const quantity = parseFloat(product.quantity) || 0;
-                            extSell = totalSubscription * quantity;
-                        } else if (product.productType == 826080004) {
+                        let extCost = 0;
+                        if (product.productType == 826080004) {
                             const percentToTest = (product.toTest || 100) / 100;
                             const multiplier = product.quantity * percentToTest * (product.annual || 1) * (product.time || 0);
-                            extSell = multiplier * product.sellPrice;
+                            extCost = multiplier * (parseFloat(product.costPrice) || 0);
                         } else {
-                            extSell = product.sellPrice * product.quantity;
+                            extCost = (parseFloat(product.costPrice) || 0) * (parseFloat(product.quantity) || 0);
                         }
-                        totalSell += extSell;
+                        totalCostSum += extCost;
                         const row = document.createElement('tr');
                         row.innerHTML = `
                                     <td style="padding: 4px 6px; padding-left: 14px; border-bottom: 1px solid #eee;">${product.name}</td>
@@ -3484,7 +3476,7 @@
             }
             
             document.getElementById('total-selected-count').textContent = totalCount;
-            document.getElementById('selected-total-sell').textContent = formatNumber(totalSell);
+            document.getElementById('selected-total-sell').textContent = formatNumber(totalCostSum);
 
             // Category breakdown pills (Selected Products tab)
             try {
