@@ -4841,6 +4841,21 @@
             return { text: statusText, style: style };
         }
 
+        function isTruthyTaxable(value) {
+            // Dataverse can return boolean, number (0/1), or string ("0"/"1"/"true"/"false").
+            if (value === true) return true;
+            if (value === false || value == null) return false;
+            if (value === 1 || value === '1') return true;
+            if (value === 0 || value === '0') return false;
+            if (typeof value === 'string') {
+                const v = value.trim().toLowerCase();
+                if (v === 'true' || v === 'yes' || v === 'y' || v === 'on') return true;
+                if (v === 'false' || v === 'no' || v === 'n' || v === 'off') return false;
+            }
+            // Fallback: treat truthy values as taxable.
+            return value == true;
+        }
+
         function renderProductRow(product, idx, productType, quoteId, isReadonly = false, groupId = null) {
             const gpm = product.gpm || calculateGPM(product.sellPrice, product.costPrice);
             let extSell, extCost;
@@ -4880,7 +4895,7 @@
                     ${selectCell}
                     <td role="cell"><div title="${product.name}">${product.name}</div></td>
                     <td role="cell" title="${product.description || 'N/A'}"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter product description" ${readonlyAttr}></div></td>
-                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of subscription units" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" data-qty-integer="1" inputmode="numeric" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of subscription units (whole numbers only)" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="total-subscription-input" data-field="totalSubscription" value="${formatNumber(product.totalSubscription)}" aria-label="Total Subscription" title="Total subscription amount" ${readonlyAttr}></div></td>
                     <td role="cell"><div class="total-monthly">$${totalMonthly}</div></td>
@@ -4918,7 +4933,7 @@
                     ${selectCell}
                     <td role="cell"><div><input type="text" class="name-input" data-field="name" value="${product.name}" aria-label="Name" title="Enter item name" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter item description" ${readonlyAttr}></div></td>
-                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of units" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" data-qty-integer="1" inputmode="numeric" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of units (whole numbers only)" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="cost-input" data-field="cost" value="${formatNumber(product.costPrice)}" aria-label="Unit Cost" title="Unit cost price" ${readonlyAttr}></div></td>
                     <td role="cell"><div class="ext-cost">$${extCost}</div></td>
@@ -4957,14 +4972,14 @@
                 setTooltip(row.querySelector('.ext-sell'), `$${extSell}`);
                 setTooltip(row.querySelector('.ext-cost'), `$${extCost}`);
             } else if (productType == 826080004) {
-                const isTaxable = product.msdyn_taxable == true;
+                const isTaxable = isTruthyTaxable(product.msdyn_taxable);
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
                 const selectCell = isReadonly ? '' : `<td role="cell"><input type="checkbox" aria-label="Select test item" title="Select this test item" ${disabledAttr}></td>`;
                 const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
                 const extSellRaw = parseFloat(extSell.toString().replace(/,/g, '')) || 0;
                 const qty = parseFloat(product.quantity) || 0;
-                const pricePerUnit = qty > 0 ? extSellRaw / qty : 0;
+                const pricePerUnit = isTaxable && qty > 0 ? extSellRaw / qty : 0;
                 row.innerHTML = `
                     ${selectCell}
                     <td role="cell"><div title="${product.name}">${product.name}</div></td>
@@ -4995,7 +5010,7 @@
                     ${selectCell}
                     <td role="cell"><div title="${product.name}">${product.name}</div></td>
                     <td role="cell" title="${product.description || 'N/A'}"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter product description" ${readonlyAttr}></div></td>
-                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of units" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" data-qty-integer="1" inputmode="numeric" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of units (whole numbers only)" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="sell-input" data-field="sell" value="${formatNumber(product.sellPrice)}" aria-label="Sell" title="Unit selling price" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="number" class="gpm-input" data-field="gpm" step="0.01" max="99.99" value="${formatGPM(gpm)}" aria-label="GPM" title="Gross Profit Margin percentage (0-99.99)" ${readonlyAttr}> %</div></td>
@@ -10954,6 +10969,14 @@
                     product.notes = input.value || 'N/A';
                 } else if (field == 'msdyn_taxable') {
                     product.msdyn_taxable = input.checked;
+                    // Test & Inspect: if Taxable is unchecked, force Price Per Unit display to $0.00 immediately.
+                    // (Display-only; does not change sell/ext-sell values.)
+                    if (rowProductType == 826080004) {
+                        const ppuEl = row.querySelector('.price-per-unit');
+                        if (ppuEl && !isTruthyTaxable(product.msdyn_taxable)) {
+                            ppuEl.textContent = `$${formatNumber(0)}`;
+                        }
+                    }
                 }
                 // Recalculate GPM if sell or cost changed
                 if (changedGPM) {
@@ -10986,7 +11009,7 @@
                 if (rowProductType == 826080004 && row.querySelector('.price-per-unit')) {
                     const extSellRaw = parseFloat(extSellVal.toString().replace(/,/g, '')) || 0;
                     const qty = parseFloat(product.quantity) || 0;
-                    const ppu = qty > 0 ? extSellRaw / qty : 0;
+                    const ppu = isTruthyTaxable(product.msdyn_taxable) && qty > 0 ? extSellRaw / qty : 0;
                     row.querySelector('.price-per-unit').textContent = `$${formatNumber(ppu)}`;
                 }
                 // Only update inputs that are not currently being edited
@@ -11246,6 +11269,68 @@
                 });
             }
         }
+
+        /** Equipment / Chargeable / Subscription quantity: block decimals at the UI level (keydown / paste / beforeinput). */
+        function isWholeNumberQuantityInput(el) {
+            return el && el.tagName === 'INPUT' && el.dataset.field === 'quantity' && el.dataset.qtyInteger === '1' && !el.readOnly && !el.disabled;
+        }
+        function onWholeNumberQtyKeydown(e) {
+            const input = e.target;
+            if (!isWholeNumberQuantityInput(input)) return;
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            const k = e.key;
+            if (k === 'e' || k === 'E' || k === '+' || k === '.' || k === ',') {
+                e.preventDefault();
+                return;
+            }
+            if (k === '-') {
+                if (!isDeductiveQuote) {
+                    e.preventDefault();
+                    return;
+                }
+                const start = input.selectionStart ?? 0;
+                if (start !== 0 || String(input.value).includes('-')) e.preventDefault();
+            }
+        }
+        function onWholeNumberQtyBeforeInput(e) {
+            const input = e.target;
+            if (!isWholeNumberQuantityInput(input)) return;
+            if (e.inputType === 'insertFromPaste') return;
+            if (e.data && /[.,eE+]/.test(e.data)) {
+                e.preventDefault();
+                return;
+            }
+            if (e.data === '-') {
+                if (!isDeductiveQuote) {
+                    e.preventDefault();
+                    return;
+                }
+                const start = input.selectionStart ?? 0;
+                if (start !== 0 || String(input.value).includes('-')) e.preventDefault();
+            }
+        }
+        function onWholeNumberQtyPaste(e) {
+            const input = e.target;
+            if (!isWholeNumberQuantityInput(input)) return;
+            e.preventDefault();
+            const text = ((e.clipboardData || window.clipboardData).getData('text') || '').replace(/,/g, '');
+            let n;
+            if (isDeductiveQuote) {
+                const m = text.trim().match(/^(-)?(\d+)/);
+                n = m && m[2] !== undefined && m[2] !== '' ? (m[1] ? -parseInt(m[2], 10) : parseInt(m[2], 10)) : NaN;
+            } else {
+                const m = text.match(/\d+/);
+                n = m ? parseInt(m[0], 10) : NaN;
+            }
+            input.value = isNaN(n) ? '' : String(n);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        function onWholeNumberQtyWheel(e) {
+            const input = e.target;
+            if (!isWholeNumberQuantityInput(input)) return;
+            if (document.activeElement === input) e.preventDefault();
+        }
+
         function attachInputListeners() {
             // Use event delegation for better reliability with dynamically added inputs
             // Remove old listeners first to prevent duplicates
@@ -11257,6 +11342,18 @@
                     container.removeEventListener('change', container._delegatedInputHandler);
                     container.removeEventListener('input', container._delegatedInputHandler);
                     container.removeEventListener('blur', container._delegatedInputHandler);
+                }
+                if (container._wholeNumberQtyKeydown) {
+                    container.removeEventListener('keydown', container._wholeNumberQtyKeydown, true);
+                }
+                if (container._wholeNumberQtyBeforeInput) {
+                    container.removeEventListener('beforeinput', container._wholeNumberQtyBeforeInput, true);
+                }
+                if (container._wholeNumberQtyPaste) {
+                    container.removeEventListener('paste', container._wholeNumberQtyPaste, true);
+                }
+                if (container._wholeNumberQtyWheel) {
+                    container.removeEventListener('wheel', container._wholeNumberQtyWheel, true);
                 }
             });
             
@@ -11295,6 +11392,14 @@
                 });
                 // Use 'blur' for text/number inputs (prevents interference with typing and backspace)
                 container.addEventListener('blur', delegatedHandler);
+                container._wholeNumberQtyKeydown = onWholeNumberQtyKeydown;
+                container._wholeNumberQtyBeforeInput = onWholeNumberQtyBeforeInput;
+                container._wholeNumberQtyPaste = onWholeNumberQtyPaste;
+                container._wholeNumberQtyWheel = onWholeNumberQtyWheel;
+                container.addEventListener('keydown', container._wholeNumberQtyKeydown, true);
+                container.addEventListener('beforeinput', container._wholeNumberQtyBeforeInput, true);
+                container.addEventListener('paste', container._wholeNumberQtyPaste, true);
+                container.addEventListener('wheel', container._wholeNumberQtyWheel, true);
             });
             
             // Also attach to document as fallback for any inputs outside containers
@@ -12760,8 +12865,9 @@
                     if (productType == 826080001 || productType == 826080003 || productType == 826080004) {
                         quoteDetail["msdyn_taxable"] = product.msdyn_taxable;
                     }
-                    // Hardcode priceperunit to 0 if not taxable for specific types, but keep frontend display unchanged
-                    if ((productType === 826080001 || productType === 826080003 || productType === 826080004) && product.msdyn_taxable === false) {
+                    // Hardcode priceperunit to 0 if not taxable (match singlesite.html). Use == for productType because
+                    // product.productType is often a string from the map (e.g. "826080001"); === would skip this branch.
+                    if ((productType == 826080001 || productType == 826080003 || productType == 826080004) && !isTruthyTaxable(product.msdyn_taxable)) {
                         quoteDetail["priceperunit"] = 0;
                     } else {
                         quoteDetail["priceperunit"] = product.sellPrice;
