@@ -3226,6 +3226,20 @@
         let chargeableParents = []; // Store parent products for Chargeable Item
         window.targetSellTotal = null;
         let isDeductiveQuote = false; // Track if quote is Deductive change order type
+        /** When true, input handlers should not flip the global dirty flag (e.g. during programmatic Finish). */
+        window._suppressDirtyChangesFlag = false;
+        function setDirtyChangesFlag(isDirty) {
+            try {
+                sessionStorage.setItem('dirtyChanges', isDirty ? 'true' : 'false');
+            } catch (e) {
+                // sessionStorage may be unavailable in some embed contexts
+            }
+        }
+        function markQuoteBuilderDirty() {
+            if (!window._suppressDirtyChangesFlag) {
+                setDirtyChangesFlag(true);
+            }
+        }
         /** GUID from env var imd_writeinproduct — placeholder product for manual chargeable lines; excluded from picker lists */
         let writeInProductGuid = null;
         /** Default UOM from write-in placeholder product (used when manual row has no catalog match) */
@@ -5756,6 +5770,7 @@
                 if (availableQuotes.length > 0) {
                     await switchToQuote(availableQuotes[0].quoteid);
                 }
+                setDirtyChangesFlag(false);
                 
             } catch (error) {
                 showError("Error loading quotes data: " + error.message);
@@ -6519,6 +6534,7 @@
                             }
                         });
                     });
+                    markQuoteBuilderDirty();
                 }
             } catch (error) {
                 console.warn("Error updating existing quote details group:", error);
@@ -8652,6 +8668,7 @@
                 const row = checkbox.closest('tr');
                 row.classList.toggle('selected', checkbox.checked);
                 updateAddBundleButton();
+                markQuoteBuilderDirty();
                 return;
             }
             const row = checkbox.closest('tr');
@@ -8830,6 +8847,7 @@
                 }
                 row.classList.remove('selected');
             }
+            markQuoteBuilderDirty();
             updateTabCounts();
             populateSelectedSummary();
         }
@@ -8922,6 +8940,7 @@
             }
             checkedCheckboxes.forEach(cb => cb.checked = false);
             document.querySelectorAll('#equipment-table tr').forEach(row => row.classList.remove('selected'));
+            markQuoteBuilderDirty();
             updateAddBundleButton();
             updateTabCounts();
             populateSelectedSummary();
@@ -9030,6 +9049,7 @@
                 selectedProducts['826080001'].push(newProduct);
             }
             
+            markQuoteBuilderDirty();
             populateCart();
         }
         function applyFilters() {
@@ -10817,6 +10837,7 @@
             
             // CRITICAL: Ensure product has correct quoteId and groupId
             product.isDirty = true;
+            markQuoteBuilderDirty();
             product.quoteId = productQuoteId; // Always set to the quoteId from row
             if (isMultiPhase && groupId && !product.groupId) {
                 product.groupId = groupId; // Set groupId for multi-phase quotes
@@ -11522,6 +11543,7 @@
             updateTotals();
             updateTabCounts();
             populateSelectedSummary();
+            markQuoteBuilderDirty();
         }
         function updateTotals() {
             // Update All Quotes Overall totals
@@ -11818,6 +11840,7 @@
                 }
             }
             if (adjusted) {
+                markQuoteBuilderDirty();
                 populateCart();
                     console.log('[Totals] Recalculation triggered');
             } else {
@@ -11972,6 +11995,9 @@
                 });
             });
             
+            if (productsToRemove.length > 0) {
+                markQuoteBuilderDirty();
+            }
             updateTabCounts();
             populateCart();
             populateSelectedSummary();
@@ -12211,6 +12237,44 @@
                 }
             });
         });
+        // Parent screen click guard: warn if Quote Builder has unsaved changes (same pattern as quotehtmlcompoennt.html).
+        (function attachParentDirtyGuardOnce() {
+            try {
+                const parentDoc = window.parent && window.parent.document;
+                if (!parentDoc) return;
+                if (parentDoc._quoteBuilderDirtyGuardAttached) return;
+                parentDoc._quoteBuilderDirtyGuardAttached = true;
+                const iframeEl = (typeof window.frameElement !== 'undefined' && window.frameElement && window.frameElement.ownerDocument === parentDoc)
+                    ? window.frameElement
+                    : parentDoc.querySelector('iframe');
+                parentDoc.addEventListener('click', function (event) {
+                    const isDirty = sessionStorage.getItem('dirtyChanges') === 'true';
+                    if (!isDirty) return;
+                    if (iframeEl && iframeEl.contains(event.target)) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (typeof event.stopImmediatePropagation === 'function') {
+                        event.stopImmediatePropagation();
+                    }
+                    const save = window.parent.confirm('You have unsaved changes. Do you want to save it?');
+                    if (save) {
+                        window._suppressDirtyChangesFlag = true;
+                        setDirtyChangesFlag(false);
+                        try {
+                            if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.showProgressIndicator === 'function') {
+                                window.parent.Xrm.Utility.showProgressIndicator('Quote saving in progress...');
+                            }
+                        } catch (e) {
+                            // ignore
+                        }
+                        const finishBtn = document.getElementById('finish');
+                        if (finishBtn) finishBtn.click();
+                    }
+                }, true);
+            } catch (e) {
+                // Ignore if parent access is restricted/unavailable
+            }
+        })();
         // Event Listeners
         document.getElementById('search').addEventListener('input', applyFilters);
         document.getElementById('prev-page').addEventListener('click', () => {
@@ -12489,6 +12553,7 @@
                 l.p.gpm = calculateGPM(l.p.sellPrice, l.p.costPrice);
                 l.p.isDirty = true;
             });
+            markQuoteBuilderDirty();
         }
         
         // Function to apply quote changes (similar to applyChanges but for individual quote)
@@ -12619,6 +12684,7 @@
             }
             
             if (adjusted) {
+                markQuoteBuilderDirty();
                 hideQuoteUpdateScreen();
             } else {
                 alert('No categories selected with totals to adjust.');
@@ -13472,6 +13538,45 @@
             button.disabled = true;
 
             try {
+            // If there are no selected products anywhere, don't run any Finish flow.
+            // (This also avoids showing the Finish prompt/loader when parent dirty-guard triggers Finish.)
+            const hasAnySelectedProducts = (() => {
+                try {
+                    const quoteIds = Object.keys(selectedProductsMap || {});
+                    for (const quoteId of quoteIds) {
+                        const isMultiPhase = quoteTypeMap[quoteId] === 826080001;
+
+                        if (isMultiPhase && selectedProductsMapByGroup && selectedProductsMapByGroup[quoteId]) {
+                            const byGroup = selectedProductsMapByGroup[quoteId];
+                            for (const groupId of Object.keys(byGroup)) {
+                                const groupProducts = byGroup[groupId] || {};
+                                for (const productType of Object.keys(groupProducts)) {
+                                    if (productType === 'bundles') continue;
+                                    const arr = groupProducts[productType];
+                                    if (Array.isArray(arr) && arr.length > 0) return true;
+                                }
+                            }
+                        }
+
+                        const qp = (selectedProductsMap && selectedProductsMap[quoteId]) || {};
+                        for (const productType of Object.keys(qp)) {
+                            if (productType === 'bundles') continue;
+                            const arr = qp[productType];
+                            if (Array.isArray(arr) && arr.length > 0) return true;
+                        }
+                    }
+                    return false;
+                } catch (e) {
+                    // If we fail to inspect state, assume there are products and let Finish proceed.
+                    return true;
+                }
+            })();
+
+            if (!hasAnySelectedProducts) {
+                alert("No product selected.");
+                return;
+            }
+
             // First, save current quote's changes to the map if there is one
             if (currentRecordId) {
                 await saveCurrentQuoteChanges(false);
@@ -13481,7 +13586,7 @@
             const allQuoteIds = Object.keys(selectedProductsMap);
             
             if (allQuoteIds.length === 0) {
-                alert("No quotes found to save.");
+                alert("No product selected.");
                 return;
             }
             
@@ -13642,7 +13747,7 @@
             }
             
             if (quotesToSave.length === 0) {
-                alert("No quotes with products found to save.");
+                alert("No product selected.");
                 return;
             }
 
@@ -13654,10 +13759,20 @@
                     await saveQuote(quoteId, quoteProducts);
                 }
                 refreshParentFormAfterFinish();
+                setDirtyChangesFlag(false);
             } catch (error) {
                 console.error("Error saving quote details:", error);
                 alert("Error saving quote details: " + error.message);
+                setDirtyChangesFlag(true);
             } finally {
+                try {
+                    if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.closeProgressIndicator === 'function') {
+                        window.parent.Xrm.Utility.closeProgressIndicator();
+                    }
+                } catch (e) {
+                    // ignore
+                }
+                window._suppressDirtyChangesFlag = false;
                 button.textContent = originalText;
                 button.disabled = false;
                 delete button.dataset.finishing;
