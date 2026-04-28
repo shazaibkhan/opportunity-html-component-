@@ -1142,6 +1142,23 @@
                 width: 50px;
             }
 
+            .drag-handle {
+                cursor: grab;
+                margin-right: 8px;
+                color: #64748b;
+                font-size: 16px;
+                user-select: none;
+            }
+            tr.dragging {
+                opacity: 0.6;
+            }
+            tr.drop-before {
+                border-top: 3px solid #3b82f6;
+            }
+            tr.drop-after {
+                border-bottom: 3px solid #3b82f6;
+            }
+
             /* Test & Inspect tab column widths */
             #cart-table.testinspect th:nth-child(1),
             #cart-table.testinspect td:nth-child(1) {
@@ -3240,6 +3257,91 @@
                 setDirtyChangesFlag(true);
             }
         }
+
+        // ----- Display Order + Drag & Drop (ported from quotehtmlcompoennt.html) -----
+        // Stable unique key for cart rows (prevents wrong removals/reorders when UI sorting differs from array order).
+        function getCartRowKey(product, fallbackIndex = 0, quoteId = null, productType = null, groupId = null) {
+            if (!product) return '';
+            // Prefer CRM ids when available (stable across clones)
+            const baseId = String(product.quotedetailid || product.writeInId || product.productId || '');
+            if (baseId) {
+                // Include scope so identical productIds in different quotes/phases/types don't conflict.
+                return `${String(quoteId || '')}|${String(groupId || '')}|${String(productType || '')}|${baseId}`;
+            }
+            // Last resort: index-based (only used if product has no identifiers at all)
+            return `${String(quoteId || '')}|${String(groupId || '')}|${String(productType || '')}|idx-${fallbackIndex}`;
+        }
+
+        function getNextDisplayOrderFromList(list) {
+            if (!Array.isArray(list) || list.length === 0) return 1;
+            let max = 0;
+            list.forEach(p => {
+                const d = parseInt(p && p.displayOrder, 10);
+                if (!isNaN(d)) max = Math.max(max, d);
+            });
+            return max + 1;
+        }
+
+        function ensureDisplayOrderAndSortList(list) {
+            if (!Array.isArray(list) || list.length === 0) return;
+            // Fill missing/null displayOrder in current list order, then sort by displayOrder.
+            let next = getNextDisplayOrderFromList(list);
+            list.forEach(p => {
+                if (!p) return;
+                const d = parseInt(p.displayOrder, 10);
+                if (p.displayOrder == null || isNaN(d)) {
+                    p.displayOrder = next++;
+                } else {
+                    p.displayOrder = d;
+                }
+            });
+            list.sort((a, b) => (a?.displayOrder || 0) - (b?.displayOrder || 0));
+        }
+
+        function resequenceDisplayOrderForList(list) {
+            if (!Array.isArray(list) || list.length === 0) return;
+            list.forEach((p, i) => {
+                if (!p) return;
+                p.displayOrder = i + 1;
+                p.isDirty = true;
+            });
+            markQuoteBuilderDirty();
+        }
+
+        function getSelectedListRefForDisplayOrder(quoteId, productType, groupId = null) {
+            const quoteIdStr = String(quoteId || '');
+            const typeStr = String(productType || '');
+            const isMultiPhase = quoteTypeMap[quoteIdStr] === 826080001;
+            if (isMultiPhase && groupId && selectedProductsMapByGroup[quoteIdStr] && selectedProductsMapByGroup[quoteIdStr][groupId]) {
+                const bucket = selectedProductsMapByGroup[quoteIdStr][groupId];
+                if (!bucket[typeStr]) bucket[typeStr] = [];
+                return bucket[typeStr];
+            }
+            if (!selectedProductsMap[quoteIdStr]) selectedProductsMap[quoteIdStr] = {};
+            if (!selectedProductsMap[quoteIdStr][typeStr]) selectedProductsMap[quoteIdStr][typeStr] = [];
+            return selectedProductsMap[quoteIdStr][typeStr];
+        }
+
+        function moveItemByRowKeyForDisplayOrder(quoteId, productType, draggedKey, targetKey, insertAfter, groupId = null) {
+            const list = getSelectedListRefForDisplayOrder(quoteId, productType, groupId);
+            if (!Array.isArray(list) || list.length === 0) return false;
+            const fromIdx = list.findIndex((p, i) => getCartRowKey(p, i, quoteId, productType, groupId) === draggedKey);
+            if (fromIdx === -1) return false;
+            const [item] = list.splice(fromIdx, 1);
+            if (!targetKey) {
+                list.push(item);
+            } else {
+                let toIdx = list.findIndex((p, i) => getCartRowKey(p, i, quoteId, productType, groupId) === targetKey);
+                if (toIdx === -1) {
+                    list.push(item);
+                } else {
+                    if (insertAfter) toIdx += 1;
+                    list.splice(toIdx, 0, item);
+                }
+            }
+            resequenceDisplayOrderForList(list);
+            return true;
+        }
         /** GUID from env var imd_writeinproduct — placeholder product for manual chargeable lines; excluded from picker lists */
         let writeInProductGuid = null;
         /** Default UOM from write-in placeholder product (used when manual row has no catalog match) */
@@ -4309,6 +4411,7 @@
                                 Object.keys(selectedProductsMapByGroup[quoteId][groupId]).forEach(categoryType => {
                                     if (categoryType !== 'bundles') {
                                         const categoryProducts = selectedProductsMapByGroup[quoteId][groupId][categoryType] || [];
+                                        ensureDisplayOrderAndSortList(categoryProducts);
                                         console.log(`[DEBUG] Quote ${quoteId}, Group ${groupId}, Type ${categoryType}: Found ${categoryProducts.length} products`);
                                         categoryProducts.forEach(p => {
                                             products.push({
@@ -4355,6 +4458,7 @@
                         if (selectedProductsMapByGroup[quoteId]) {
                             Object.keys(selectedProductsMapByGroup[quoteId]).forEach(groupId => {
                                 const groupProducts = selectedProductsMapByGroup[quoteId][groupId][productType] || [];
+                                ensureDisplayOrderAndSortList(groupProducts);
                                 console.log(`[DEBUG] Quote ${quoteId}, Group ${groupId}, ProductType ${productType}: Found ${groupProducts.length} products in selectedProductsMapByGroup`);
                                 groupProducts.forEach(p => {
                                     products.push({
@@ -4400,6 +4504,7 @@
                         Object.keys(selectedProductsMap[quoteId]).forEach(categoryType => {
                             if (categoryType !== 'bundles') {
                                 const categoryProducts = selectedProductsMap[quoteId][categoryType] || [];
+                                ensureDisplayOrderAndSortList(categoryProducts);
                                 categoryProducts.forEach(p => {
                                     products.push({
                                         ...p,
@@ -4410,6 +4515,7 @@
                         });
                     } else {
                         products = selectedProductsMap[quoteId][productType] || [];
+                        ensureDisplayOrderAndSortList(products);
                         console.log(`[DEBUG] Regular quote ${quoteId}, ProductType ${productType}: Found ${products.length} products`);
                     }
                 }
@@ -4878,10 +4984,12 @@
             const row = document.createElement('tr');
             row.setAttribute('role', 'row');
             row.dataset.index = idx;
+            row.dataset.producttype = String(productType);
             row.dataset.quoteid = quoteId;
             if (groupId) {
                 row.dataset.groupid = groupId;
             }
+            row.dataset.rowkey = getCartRowKey(product, idx, quoteId, productType, groupId);
             if (product.productId) {
                 row.dataset.productid = product.productId;
             }
@@ -4903,7 +5011,7 @@
                 });
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
-                const selectCell = isReadonly ? '' : `<td role="cell"><input type="checkbox" aria-label="Select subscription item" title="Select this subscription item" ${disabledAttr}></td>`;
+                const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select subscription item" title="Select this subscription item" ${disabledAttr}></td>`;
                 const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
                 row.innerHTML = `
                     ${selectCell}
@@ -4939,7 +5047,7 @@
                 const deleteButton = (!isReadonly && product.isWriteIn && (product.quotedetailid === null || product.quotedetailid === undefined))
                     ? `<button class="delete-row-btn" data-writeinid="${product.writeInId}" style="background: none; border: none; font-size: 20px; cursor: pointer; color: #dc2626; margin-right: 5px;" aria-label="Remove this row" title="Remove this manual chargeable item">−</button>`
                     : '';
-                const selectCell = isReadonly ? '' : `<td role="cell"><input type="checkbox" aria-label="Select chargeable item" title="Select this chargeable item" ${disabledAttr}></td>`;
+                const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select chargeable item" title="Select this chargeable item" ${disabledAttr}></td>`;
                 const editButtons = isReadonly
                     ? `<button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button>`
                     : deleteButton;
@@ -4966,7 +5074,7 @@
                 const isTaxable = product.msdyn_taxable == true;
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
-                const selectCell = isReadonly ? '' : `<td role="cell"><input type="checkbox" aria-label="Select labor item" title="Select this labor item" ${disabledAttr}></td>`;
+                const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select labor item" title="Select this labor item" ${disabledAttr}></td>`;
                 const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
                 row.innerHTML = `
                     ${selectCell}
@@ -4989,7 +5097,7 @@
                 const isTaxable = isTruthyTaxable(product.msdyn_taxable);
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
-                const selectCell = isReadonly ? '' : `<td role="cell"><input type="checkbox" aria-label="Select test item" title="Select this test item" ${disabledAttr}></td>`;
+                const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select test item" title="Select this test item" ${disabledAttr}></td>`;
                 const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
                 const extSellRaw = parseFloat(extSell.toString().replace(/,/g, '')) || 0;
                 const qty = parseFloat(product.quantity) || 0;
@@ -5018,7 +5126,7 @@
             } else {
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
-                const selectCell = isReadonly ? '' : `<td role="cell"><input type="checkbox" aria-label="Select item" title="Select this item" ${disabledAttr}></td>`;
+                const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select item" title="Select this item" ${disabledAttr}></td>`;
                 const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
                 row.innerHTML = `
                     ${selectCell}
@@ -5805,6 +5913,7 @@
                         <attribute name="description"/>
                         <attribute name="imd_note"/>
                         <attribute name="lineitemnumber"/>
+                        <attribute name="imd_displayorder"/>
                         <attribute name="ispriceoverridden"/>
                         <attribute name="imd_cost_base"/>
                         <attribute name="baseamount"/>
@@ -5930,6 +6039,10 @@
                     const description = entity.description || entity['product.description'] || 'N/A';
                     const notes = entity.imd_note || 'N/A';
                     const lineItemNumber = entity.lineitemnumber || null;
+                    const displayOrderRaw = entity.imd_displayorder;
+                    const displayOrder = displayOrderRaw !== null && displayOrderRaw !== undefined && displayOrderRaw !== ''
+                        ? parseInt(displayOrderRaw, 10)
+                        : null;
                     let sellPrice = parseFloat((entity.imd_unitsell != null ? entity.imd_unitsell : entity.priceperunit || 0).toFixed(2));
                     const quantity = entity.quantity || 1;
                     // For deductive quotes, if imd_originalquantity is null, default to 0 (not quantity)
@@ -5955,6 +6068,7 @@
                         description,
                         notes,
                         lineItemNumber,
+                        displayOrder: (displayOrder !== null && !isNaN(displayOrder)) ? displayOrder : null,
                         sellPrice,
                         costPrice,
                         quantity,
@@ -7203,6 +7317,7 @@
                             <attribute name="description"/>
                             <attribute name="imd_note"/>
                             <attribute name="lineitemnumber"/>
+                            <attribute name="imd_displayorder"/>
                             <attribute name="ispriceoverridden"/>
                             <attribute name="imd_cost_base"/>
                             <attribute name="imd_extcost"/>
@@ -7300,6 +7415,10 @@
                     const description = entity.description || entity['product.description'] || 'N/A';
                     const notes = entity.imd_note || 'N/A';
                     const lineItemNumber = entity.lineitemnumber || null;
+                    const displayOrderRaw = entity.imd_displayorder;
+                    const displayOrder = displayOrderRaw !== null && displayOrderRaw !== undefined && displayOrderRaw !== ''
+                        ? parseInt(displayOrderRaw, 10)
+                        : null;
                     let sellPrice = parseFloat((entity.imd_unitsell != null ? entity.imd_unitsell : entity.priceperunit || 0).toFixed(2));
                     const quantity = entity.quantity || 1;
                     // For deductive quotes, if imd_originalquantity is null, default to 0 (not quantity)
@@ -7333,6 +7452,7 @@
                         description,
                         notes,
                         lineItemNumber,
+                        displayOrder: (displayOrder !== null && !isNaN(displayOrder)) ? displayOrder : null,
                         sellPrice,
                         costPrice,
                         quantity,
@@ -9550,7 +9670,7 @@
                             const actualIdx = selectedProductsMap[quoteId]?.[productType]?.findIndex(p => 
                                 p.productId === product.productId || (p.quotedetailid && product.quotedetailid && p.quotedetailid === product.quotedetailid)
                             ) ?? productIdx;
-                                const row = renderProductRow(product, actualIdx, productType, quoteId, false); // enable inline editing in Summary tab
+                                const row = renderProductRow(product, actualIdx, productType, quoteId, false, (typeof groupId !== 'undefined' ? groupId : null)); // enable inline editing in Summary tab
                                 // Chargeable rows in editable mode include an extra blank "add-row" spacer cell
                                 // before the actual action/remove cell. Remove only that spacer in Summary so
                                 // header alignment remains correct while keeping the Remove button functional.
@@ -9562,13 +9682,10 @@
                                     }
                                 }
                                 // Ensure row carries required dataset attributes for update handlers
-                            row.dataset.actualIdx = actualIdx;
+                                row.dataset.actualIdx = actualIdx;
                                 row.dataset.index = actualIdx;
                                 row.dataset.producttype = productType;
                                 row.dataset.quoteid = quoteId;
-                                if (typeof groupId !== 'undefined' && groupId !== null) {
-                                    row.dataset.groupid = groupId;
-                                }
                             tbody.appendChild(row);
                         });
                         
@@ -10177,19 +10294,10 @@
                         tbody.dataset.groupid = groupId;
                         tbody.dataset.quoteid = quoteId;
                         
-                        // Custom sort for Chargeable Items
-                        let sortedProducts = [...groupProducts];
-                        if (activeProductType === '826080001') {
-                            sortedProducts.sort((a, b) => {
-                                const nameA = a.name || '';
-                                const nameB = b.name || '';
-                                if (nameA === '' && nameB !== '') return 1;
-                                if (nameA !== '' && nameB === '') return -1;
-                                return nameA.localeCompare(nameB);
-                            });
-                        } else {
-                            sortedProducts.sort((a, b) => a.name.localeCompare(b.name || ''));
-                        }
+                        // Render in displayOrder so drag/drop persists visually (same behavior as quotehtmlcompoennt.html).
+                        // Use the canonical list reference (not a cloned array) so keys match during DnD moves.
+                        const sortedProducts = getSelectedListRefForDisplayOrder(quoteId, activeProductType, groupId);
+                        ensureDisplayOrderAndSortList(sortedProducts);
                         
                         // Render product rows
                         sortedProducts.forEach((product, productIdx) => {
@@ -10261,20 +10369,10 @@
                     return; // Skip the non-multi-phase code below
                 }
                 
-                // Non-multi-phase quote - show products normally (existing code)
-                // Custom sort for Chargeable Items: unnamed (blank) rows go to the bottom
-                let sortedProducts = [...quoteProducts];
-                if (activeProductType === '826080001') {
-                    sortedProducts.sort((a, b) => {
-                        const nameA = a.name || '';
-                        const nameB = b.name || '';
-                        if (nameA === '' && nameB !== '') return 1;
-                        if (nameA !== '' && nameB === '') return -1;
-                        return nameA.localeCompare(nameB);
-                    });
-                } else {
-                    sortedProducts.sort((a, b) => a.name.localeCompare(b.name || ''));
-                }
+                // Non-multi-phase quote - render in displayOrder so drag/drop persists visually.
+                // Use the canonical list reference for this quote + type (not a cloned array).
+                const sortedProducts = getSelectedListRefForDisplayOrder(quoteId, activeProductType, null);
+                ensureDisplayOrderAndSortList(sortedProducts);
                 
                 // Create quote table wrapper
                 const quoteWrapper = document.createElement('div');
@@ -12815,6 +12913,153 @@
                 showError("Error loading selected quote: " + error.message);
             }
         });
+
+        // Drag & drop reordering (native HTML5 DnD) for Cart + Summary tables.
+        (function attachDisplayOrderDnDOnce() {
+            if (window._displayOrderDnDAttached) return;
+            window._displayOrderDnDAttached = true;
+            const state = { key: null, productType: null, quoteId: null, groupId: null };
+
+            const snapshotExpandedSections = () => {
+                const expandedQuotes = new Set();
+                document.querySelectorAll('.quote-table-content[data-quoteid]').forEach(el => {
+                    const qid = el.dataset.quoteid;
+                    if (!qid) return;
+                    if (!el.classList.contains('collapsed')) expandedQuotes.add(String(qid));
+                });
+                const expandedGroups = new Set();
+                document.querySelectorAll('.group-table-content[data-groupid]').forEach(el => {
+                    const gid = el.dataset.groupid;
+                    const qid = el.closest('.group-table-wrapper')?.dataset.quoteid || el.dataset.quoteid || '';
+                    if (!gid) return;
+                    if (!el.classList.contains('collapsed')) expandedGroups.add(`${String(qid)}|${String(gid)}`);
+                });
+                return { expandedQuotes, expandedGroups };
+            };
+
+            const restoreExpandedSections = (snap) => {
+                if (!snap) return;
+                // Quotes
+                document.querySelectorAll('.quote-table-content[data-quoteid]').forEach(el => {
+                    const qid = String(el.dataset.quoteid || '');
+                    const header = document.querySelector(`.quote-table-header[data-quoteid="${qid}"]`);
+                    const toggle = header ? header.querySelector('.quote-toggle') : null;
+                    if (snap.expandedQuotes && snap.expandedQuotes.has(qid)) {
+                        el.classList.remove('collapsed');
+                        if (toggle) toggle.textContent = '-';
+                    } else {
+                        // leave as-is (default render decides)
+                    }
+                });
+                // Groups
+                document.querySelectorAll('.group-table-content[data-groupid]').forEach(el => {
+                    const gid = String(el.dataset.groupid || '');
+                    const wrapper = el.closest('.group-table-wrapper');
+                    const qid = String(wrapper?.dataset.quoteid || '');
+                    const key = `${qid}|${gid}`;
+                    const header = wrapper ? wrapper.querySelector(`.group-table-header[data-groupid="${gid}"]`) : null;
+                    const toggle = header ? header.querySelector('.group-toggle') : null;
+                    if (snap.expandedGroups && snap.expandedGroups.has(key)) {
+                        el.classList.remove('collapsed');
+                        if (toggle) toggle.textContent = '-';
+                    }
+                });
+            };
+
+            const clearDropMarks = (scopeEl) => {
+                const root = scopeEl || document;
+                root.querySelectorAll('tr.drop-before, tr.drop-after').forEach(r => {
+                    r.classList.remove('drop-before', 'drop-after');
+                });
+            };
+
+            document.addEventListener('dragstart', (e) => {
+                const handle = e.target && e.target.closest ? e.target.closest('.drag-handle') : null;
+                if (!handle) return;
+                const row = handle.closest('tr');
+                if (!row) return;
+                const productType = row.dataset.producttype;
+                const key = row.dataset.rowkey;
+                const quoteId = row.dataset.quoteid;
+                const groupId = row.dataset.groupid || null;
+                if (!productType || !key || !quoteId) return;
+
+                state.key = key;
+                state.productType = String(productType);
+                state.quoteId = String(quoteId);
+                state.groupId = groupId ? String(groupId) : null;
+                row.classList.add('dragging');
+                try {
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', key);
+                } catch (err) {
+                    // ignore
+                }
+            });
+
+            document.addEventListener('dragend', (e) => {
+                const row = e.target && e.target.closest ? e.target.closest('tr') : null;
+                if (row) row.classList.remove('dragging');
+                clearDropMarks();
+                state.key = null;
+                state.productType = null;
+                state.quoteId = null;
+                state.groupId = null;
+            });
+
+            document.addEventListener('dragover', (e) => {
+                if (!state.key || !state.productType || !state.quoteId) return;
+                const row = e.target && e.target.closest ? e.target.closest('tr') : null;
+                if (!row) return;
+                if (String(row.dataset.producttype) !== String(state.productType)) return;
+                if (String(row.dataset.quoteid) !== String(state.quoteId)) return;
+                if (String(row.dataset.groupid || '') !== String(state.groupId || '')) return;
+
+                e.preventDefault();
+                clearDropMarks(row.closest('table') || row.parentElement);
+                const rect = row.getBoundingClientRect();
+                const before = e.clientY < rect.top + rect.height / 2;
+                row.classList.add(before ? 'drop-before' : 'drop-after');
+            });
+
+            document.addEventListener('drop', (e) => {
+                if (!state.key || !state.productType || !state.quoteId) return;
+                const row = e.target && e.target.closest ? e.target.closest('tr') : null;
+                const tbody = e.target && e.target.closest ? e.target.closest('tbody') : null;
+                if (!tbody) return;
+
+                e.preventDefault();
+
+                let targetKey = null;
+                let insertAfter = false;
+                if (
+                    row &&
+                    String(row.dataset.producttype) === String(state.productType) &&
+                    String(row.dataset.quoteid) === String(state.quoteId) &&
+                    String(row.dataset.groupid || '') === String(state.groupId || '')
+                ) {
+                    targetKey = row.dataset.rowkey || null;
+                    insertAfter = row.classList.contains('drop-after');
+                }
+
+                const moved = moveItemByRowKeyForDisplayOrder(
+                    state.quoteId,
+                    String(state.productType),
+                    state.key,
+                    targetKey,
+                    insertAfter,
+                    state.groupId
+                );
+                clearDropMarks(row ? (row.closest('table') || tbody) : tbody);
+
+                if (moved) {
+                    const snap = snapshotExpandedSections();
+                    populateCart();
+                    populateSelectedSummary();
+                    restoreExpandedSections(snap);
+                }
+            });
+        })();
         // Save a single quote's products and totals
         async function saveQuote(quoteId, quoteProducts) {
             if (!quoteId) {
@@ -12902,6 +13147,7 @@
                         "description": product.description,
                         "imd_note": product.notes,
                         "lineitemnumber": product.lineItemNumber,
+                        "imd_displayorder": (product.displayOrder != null && !isNaN(parseInt(product.displayOrder, 10))) ? parseInt(product.displayOrder, 10) : product.lineItemNumber,
                         "manualdiscountamount": 0,
                         "tax": 0,
                         "imd_cost": product.costPrice,
