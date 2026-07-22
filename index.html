@@ -319,6 +319,47 @@
                 font-style: italic;
             }
 
+            .quote-group-order-section {
+                margin-top: 14px;
+                padding-top: 12px;
+                border-top: 1px solid #e2e8f0;
+            }
+            .quote-group-order-title {
+                font-size: 13px;
+                font-weight: 700;
+                color: #1e293b;
+                margin: 0 0 10px 0;
+            }
+            .quote-group-order-list {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .quote-group-order-list li {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 10px 12px;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                background: #ffffff;
+                color: #1e293b;
+                font-size: 13px;
+            }
+            .quote-group-drag-handle {
+                cursor: grab;
+                color: #64748b;
+                user-select: none;
+                font-size: 16px;
+                line-height: 1;
+            }
+            .quote-group-order-list li.dragging {
+                opacity: 0.6;
+            }
+
             .group-status-badge {
                 display: inline-flex;
                 align-items: center;
@@ -2886,7 +2927,12 @@
                             </select>
                             <button id="add-group-btn" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; white-space: nowrap;" aria-label="Add new group">Add New Group</button>
                             <button id="rename-group-btn" type="button" disabled style="background: #ffffff; color: #1e293b; border: 2px solid #cbd5e1; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; white-space: nowrap;" aria-label="Rename selected quote group" title="Change the name of the selected phase / group">Rename Group</button>
+                            <button id="delete-group-btn" type="button" disabled style="background: #ffffff; color: #dc2626; border: 2px solid #fecaca; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; white-space: nowrap;" aria-label="Delete selected quote group" title="Delete this phase and all its quote lines">Delete Group</button>
                             <span id="group-status" class="group-status-badge"></span>
+                        </div>
+                        <div id="quote-group-order-section" class="quote-group-order-section" style="display:none;">
+                            <div class="quote-group-order-title">Reorder phases (drag &amp; drop)</div>
+                            <ul id="quote-group-order-list" class="quote-group-order-list" role="list"></ul>
                         </div>
                         <div id="new-group-form" style="display: none;">
                             <h3 style="margin-top: 0; margin-bottom: 10px; color: #1e293b; font-size: 16px; font-weight: 600;">Create New Group</h3>
@@ -4947,17 +4993,11 @@
         }
 
         // Render a single product row (helper function)
-        // Helper function to get status text and style
-        function getStatusDisplay(statecode) {
-            const statusMap = {
-                0: 'Active',
-                1: 'Retired',
-                2: 'Draft',
-                3: 'Under Revision'
-            };
-            const statusText = statusMap[statecode] || 'Active';
-            const isRetired = statecode === 1;
-            const style = isRetired ? 'color: #dc2626; font-weight: 600;' : '';
+        // Helper function to get status text and style from imd_inactive (Yes = Inactive, No = Active)
+        function getStatusDisplay(imd_inactive) {
+            const isInactive = imd_inactive === true;
+            const statusText = isInactive ? 'Inactive' : 'Active';
+            const style = isInactive ? 'color: #dc2626; font-weight: 600;' : '';
             return { text: statusText, style: style };
         }
 
@@ -4976,11 +5016,22 @@
             return value == true;
         }
 
+        function escapeAttribute(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
         function renderProductRow(product, idx, productType, quoteId, isReadonly = false, groupId = null) {
             const gpm = product.gpm || calculateGPM(product.sellPrice, product.costPrice);
             let extSell, extCost;
-            const statecode = product.statecode !== undefined ? product.statecode : 0;
-            const statusDisplay = getStatusDisplay(statecode);
+            const statusDisplay = getStatusDisplay(product.imd_inactive === true);
+            const productNameAttr = escapeAttribute(product.name);
+            const productDescriptionAttr = escapeAttribute(product.description);
+            const productNotesAttr = escapeAttribute(product.notes);
             const row = document.createElement('tr');
             row.setAttribute('role', 'row');
             row.dataset.index = idx;
@@ -5012,11 +5063,11 @@
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
                 const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select subscription item" title="Select this subscription item" ${disabledAttr}></td>`;
-                const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
+                const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${productNameAttr}">Edit</button></td>` : '';
                 row.innerHTML = `
                     ${selectCell}
-                    <td role="cell"><div title="${product.name}">${product.name}</div></td>
-                    <td role="cell" title="${product.description || 'N/A'}"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter product description" ${readonlyAttr}></div></td>
+                    <td role="cell"><div title="${productNameAttr}">${product.name}</div></td>
+                    <td role="cell" title="${productDescriptionAttr || 'N/A'}"><div><input type="text" class="description-input" data-field="description" value="${productDescriptionAttr}" aria-label="Description" title="Enter product description" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" data-qty-integer="1" inputmode="numeric" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of subscription units (whole numbers only)" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="total-subscription-input" data-field="totalSubscription" value="${formatNumber(product.totalSubscription)}" aria-label="Total Subscription" title="Total subscription amount" ${readonlyAttr}></div></td>
@@ -5026,7 +5077,7 @@
                     <td role="cell"><div class="term-total">$${formatNumber(product.termTotal)}</div></td>
                     <td role="cell"><div class="rar">$${formatNumber(product.rar)}</div></td>
                     <td role="cell"><div style="${statusDisplay.style}">${statusDisplay.text}</div></td>
-                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${product.notes}" aria-label="Notes" title="Additional notes for this subscription" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${productNotesAttr}" aria-label="Notes" title="Additional notes for this subscription" ${readonlyAttr}></div></td>
                     ${editCell}
                 `;
                 setTooltip(row.querySelector('.total-monthly'), `$${totalMonthly}`);
@@ -5049,12 +5100,12 @@
                     : '';
                 const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select chargeable item" title="Select this chargeable item" ${disabledAttr}></td>`;
                 const editButtons = isReadonly
-                    ? `<button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button>`
+                    ? `<button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${productNameAttr}">Edit</button>`
                     : deleteButton;
                 row.innerHTML = `
                     ${selectCell}
-                    <td role="cell"><div><input type="text" class="name-input" data-field="name" value="${product.name}" aria-label="Name" title="Enter item name" ${readonlyAttr}></div></td>
-                    <td role="cell"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter item description" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="text" class="name-input" data-field="name" value="${productNameAttr}" aria-label="Name" title="Enter item name" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="text" class="description-input" data-field="description" value="${productDescriptionAttr}" aria-label="Description" title="Enter item description" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" data-qty-integer="1" inputmode="numeric" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of units (whole numbers only)" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="cost-input" data-field="cost" value="${formatNumber(product.costPrice)}" aria-label="Unit Cost" title="Unit cost price" ${readonlyAttr}></div></td>
@@ -5064,7 +5115,7 @@
                     <td role="cell"><div><input type="number" class="gpm-input" data-field="gpm" step="0.01" max="99.99" value="${formatGPM(gpm)}" aria-label="GPM" title="Gross Profit Margin percentage (0-99.99)" ${readonlyAttr}> %</div></td>
                     <td role="cell"><div><input type="checkbox" class="taxable-input" data-field="msdyn_taxable" ${isTaxable ? 'checked' : ''} aria-label="Taxable" title="Check if this item is taxable" ${disabledAttr}></div></td>
                     <td role="cell"><div style="${statusDisplay.style}">${statusDisplay.text}</div></td>
-                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${product.notes}" aria-label="Notes" title="Additional notes for this item" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${productNotesAttr}" aria-label="Notes" title="Additional notes for this item" ${readonlyAttr}></div></td>
                     ${addRowCell}
                     <td role="cell">${editButtons}</td>
                 `;
@@ -5075,10 +5126,10 @@
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
                 const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select labor item" title="Select this labor item" ${disabledAttr}></td>`;
-                const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
+                const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${productNameAttr}">Edit</button></td>` : '';
                 row.innerHTML = `
                     ${selectCell}
-                    <td role="cell"><div title="${product.name}">${product.name}</div></td>
+                    <td role="cell"><div title="${productNameAttr}">${product.name}</div></td>
                     <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} step="0.01" value="${product.quantity}" aria-label="Quantity" title="Number of labor hours (decimals allowed)" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="sell-input" data-field="sell" value="${formatNumber(product.sellPrice)}" aria-label="Sell" title="Labor selling rate per unit" ${readonlyAttr}></div></td>
@@ -5088,7 +5139,7 @@
                     <td role="cell"><div class="ext-cost">$${extCost}</div></td>
                     <td role="cell"><div><input type="checkbox" class="taxable-input" data-field="msdyn_taxable" ${isTaxable ? 'checked' : ''} aria-label="Taxable" title="Check if this labor is taxable" ${disabledAttr}></div></td>
                     <td role="cell"><div style="${statusDisplay.style}">${statusDisplay.text}</div></td>
-                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${product.notes}" aria-label="Notes" title="Additional notes for this labor item" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${productNotesAttr}" aria-label="Notes" title="Additional notes for this labor item" ${readonlyAttr}></div></td>
                     ${editCell}
                 `;
                 setTooltip(row.querySelector('.ext-sell'), `$${extSell}`);
@@ -5098,14 +5149,14 @@
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
                 const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select test item" title="Select this test item" ${disabledAttr}></td>`;
-                const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
+                const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${productNameAttr}">Edit</button></td>` : '';
                 const extSellRaw = parseFloat(extSell.toString().replace(/,/g, '')) || 0;
                 const qty = parseFloat(product.quantity) || 0;
                 const pricePerUnit = isTaxable && qty > 0 ? extSellRaw / qty : 0;
                 row.innerHTML = `
                     ${selectCell}
-                    <td role="cell"><div title="${product.name}">${product.name}</div></td>
-                    <td role="cell"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter test description" ${readonlyAttr}></div></td>
+                    <td role="cell"><div title="${productNameAttr}">${product.name}</div></td>
+                    <td role="cell"><div><input type="text" class="description-input" data-field="description" value="${productDescriptionAttr}" aria-label="Description" title="Enter test description" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="number" class="time-input" data-field="time" step="0.01" min="0" value="${product.time || 0}" aria-label="Time" title="Time required per test" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" ${isDeductiveQuote ? '' : 'min="0"'} value="${product.quantity}" aria-label="Quantity" title="Number of items to test" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
@@ -5118,7 +5169,7 @@
                     <td role="cell"><div><input type="number" class="gpm-input" data-field="gpm" step="0.01" max="99.99" value="${formatGPM(gpm)}" aria-label="GPM" title="Gross Profit Margin percentage (0-99.99)" ${readonlyAttr}> %</div></td>
                     <td role="cell"><div><input type="checkbox" class="taxable-input" data-field="msdyn_taxable" ${isTaxable ? 'checked' : ''} aria-label="Taxable" title="Check if this test is taxable" ${disabledAttr}></div></td>
                     <td role="cell"><div style="${statusDisplay.style}">${statusDisplay.text}</div></td>
-                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${product.notes}" aria-label="Notes" title="Additional notes for this test item" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${productNotesAttr}" aria-label="Notes" title="Additional notes for this test item" ${readonlyAttr}></div></td>
                     ${editCell}
                 `;
                 setTooltip(row.querySelector('.ext-cost'), `$${extCost}`);
@@ -5127,11 +5178,11 @@
                 const readonlyAttr = isReadonly ? 'readonly' : '';
                 const disabledAttr = isReadonly ? 'disabled' : '';
                 const selectCell = isReadonly ? '' : `<td role="cell"><span class="drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">☰</span><input type="checkbox" aria-label="Select item" title="Select this item" ${disabledAttr}></td>`;
-                const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${product.name}">Edit</button></td>` : '';
+                const editCell = isReadonly ? `<td role="cell"><button class="edit-mini" onclick="editProductInCart('${productType}', '${quoteId}', ${idx})" aria-label="Edit ${productNameAttr}">Edit</button></td>` : '';
                 row.innerHTML = `
                     ${selectCell}
-                    <td role="cell"><div title="${product.name}">${product.name}</div></td>
-                    <td role="cell" title="${product.description || 'N/A'}"><div><input type="text" class="description-input" data-field="description" value="${product.description}" aria-label="Description" title="Enter product description" ${readonlyAttr}></div></td>
+                    <td role="cell"><div title="${productNameAttr}">${product.name}</div></td>
+                    <td role="cell" title="${productDescriptionAttr || 'N/A'}"><div><input type="text" class="description-input" data-field="description" value="${productDescriptionAttr}" aria-label="Description" title="Enter product description" ${readonlyAttr}></div></td>
                     <td role="cell"><div><input type="number" class="qty-input" data-field="quantity" data-qty-integer="1" inputmode="numeric" ${isDeductiveQuote ? '' : 'min="0"'} step="1" value="${Math.round(product.quantity)}" aria-label="Quantity" title="Number of units (whole numbers only)" ${readonlyAttr}></div></td>
                     ${isDeductiveQuote ? `<td role="cell"><div>${product.originalQuantity || product.quantity}</div></td>` : ''}
                     <td role="cell"><div><input type="text" class="sell-input" data-field="sell" value="${formatNumber(product.sellPrice)}" aria-label="Sell" title="Unit selling price" ${readonlyAttr}></div></td>
@@ -5140,7 +5191,7 @@
                     <td role="cell"><div class="ext-sell">$${extSell}</div></td>
                     <td role="cell"><div class="ext-cost">$${extCost}</div></td>
                     <td role="cell"><div style="${statusDisplay.style}">${statusDisplay.text}</div></td>
-                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${product.notes}" aria-label="Notes" title="Additional notes for this item" ${readonlyAttr}></div></td>
+                    <td role="cell"><div><input type="text" class="notes-input" data-field="notes" value="${productNotesAttr}" aria-label="Notes" title="Additional notes for this item" ${readonlyAttr}></div></td>
                     ${editCell}
                 `;
                 setTooltip(row.querySelector('.ext-sell'), `$${extSell}`);
@@ -5950,6 +6001,7 @@
                             <attribute name="defaultuomid"/>
                             <attribute name="imd_chargeableitemtype"/>
                             <attribute name="statecode"/>
+                            <attribute name="imd_inactive"/>
                         </link-entity>
                         <link-entity name="imd_quotegroup" from="imd_quotegroupid" to="imd_quotegroup" link-type="outer" alias="quotegroup">
                             <attribute name="imd_quotegroupid"/>
@@ -6057,6 +6109,7 @@
                     const ispriceoverridden = entity.ispriceoverridden;
                     const chargeableItemType = entity['product.imd_chargeableitemtype'] || null;
                     const statecode = entity['product.statecode'] !== undefined ? entity['product.statecode'] : (productData?.productid?.statecode !== undefined ? productData.productid.statecode : 0);
+                    const imd_inactive = entity['product.imd_inactive'] !== undefined ? entity['product.imd_inactive'] === true : (productData?.productid?.imd_inactive === true);
                     let targetType = String(productType); // Ensure it's a string
                     if (productData && productData.productid.isBundle) {
                         targetType = BUNDLE_TYPE;
@@ -6082,7 +6135,8 @@
                         isPriceOverridden: ispriceoverridden,
                         quoteId: quoteId, // Track which quote this belongs to
                         groupId: groupId, // Track which group this belongs to (for multi-phase quotes)
-                        statecode: statecode // Product status: 0=Active, 1=Retired, 2=Draft, 3=Under Revision
+                        statecode: statecode, // Product status: 0=Active, 1=Retired, 2=Draft, 3=Under Revision
+                        imd_inactive: imd_inactive
                     };
                     newProduct.isDirty = false;
                     newProduct.original = {
@@ -6420,7 +6474,8 @@
                     const quoteGroupData = {
                         "imd_name": groupName || "Group",
                         [detectedQuoteField]: quoteId,
-                        [detectedGroupField]: groupId
+                        [detectedGroupField]: groupId,
+                        "imd_displayorderquotegroup": (allGroupsMap[String(quoteId)] ? (allGroupsMap[String(quoteId)].length + 1) : 1)
                     };
                     const quoteGroupResult = await window.parent.Xrm.WebApi.createRecord("imd_quotegroups", quoteGroupData);
                     console.log(`Successfully created quote group using detected fields: ${detectedQuoteField}, ${detectedGroupField}`);
@@ -6515,7 +6570,8 @@
                     try {
                         // Create record with just the name first
                         const quoteGroupData = {
-                            "imd_name": groupName || "Group"
+                            "imd_name": groupName || "Group",
+                            "imd_displayorderquotegroup": (allGroupsMap[String(quoteId)] ? (allGroupsMap[String(quoteId)].length + 1) : 1)
                         };
                         const createResult = await window.parent.Xrm.WebApi.createRecord(variations[i].entitySet, quoteGroupData);
                         const newRecordId = createResult.id;
@@ -6567,7 +6623,8 @@
                 }
                 try {
                     const quoteGroupData = {
-                        "imd_name": groupName || "Group"
+                        "imd_name": groupName || "Group",
+                        "imd_displayorderquotegroup": (allGroupsMap[String(quoteId)] ? (allGroupsMap[String(quoteId)].length + 1) : 1)
                     };
                     
                     // Add quote lookup
@@ -6726,7 +6783,7 @@
                 // Retrieve all imd_quotegroup records for this quote and get their linked group + name
                 const quoteGroupsResult = await window.parent.Xrm.WebApi.retrieveMultipleRecords(
                     "imd_quotegroup",
-                    `?$filter=_imd_quote_value eq ${quoteId}&$select=imd_quotegroupid,_imd_group_value,imd_name`
+                    `?$filter=_imd_quote_value eq ${quoteId}&$select=imd_quotegroupid,_imd_group_value,imd_name,imd_displayorderquotegroup`
                 );
 
                 // Map to a lightweight "group" object used by the UI:
@@ -6734,9 +6791,13 @@
                 const groupsForQuote = quoteGroupsResult.entities.map(qg => {
                     const groupId = qg._imd_group_value || qg.imd_quotegroupid;
                     const groupName = qg.imd_name || 'Phase';
+                    const raw = qg.imd_displayorderquotegroup;
+                    const ord = raw !== null && raw !== undefined && raw !== '' ? parseInt(raw, 10) : null;
                     return {
                         imd_groupid: String(groupId),
-                        imd_name: groupName
+                        imd_name: groupName,
+                        _imd_quotegroupid: qg.imd_quotegroupid || null,
+                        _displayOrderQuoteGroup: isNaN(ord) ? null : ord
                     };
                 });
 
@@ -6768,7 +6829,7 @@
                         // Don't use $expand - just use the lookup field directly
                         quoteGroupsResult = await window.parent.Xrm.WebApi.retrieveMultipleRecords(
                             "imd_quotegroup",
-                            `?$filter=_imd_quote_value eq ${quoteId}&$select=imd_quotegroupid,${fieldName},imd_name`
+                            `?$filter=_imd_quote_value eq ${quoteId}&$select=imd_quotegroupid,${fieldName},imd_name,imd_displayorderquotegroup`
                         );
                         if (quoteGroupsResult.entities.length > 0 && quoteGroupsResult.entities[0][fieldName]) {
                             groupFieldName = fieldName;
@@ -6815,9 +6876,13 @@
                                 if (groupId && !processedGroupIds.has(groupId)) {
                                     processedGroupIds.add(groupId);
                                     const groupName = groupNameMap[groupId] || qg.imd_name || 'Unknown Group';
+                        const raw0 = qg.imd_displayorderquotegroup;
+                        const ord0 = raw0 !== null && raw0 !== undefined && raw0 !== '' ? parseInt(raw0, 10) : null;
                         groupsWithQuoteGroups.push({
                             imd_groupid: groupId,
-                            imd_name: groupName
+                            imd_name: groupName,
+                            _imd_quotegroupid: qg.imd_quotegroupid || null,
+                            _displayOrderQuoteGroup: isNaN(ord0) ? null : ord0
                         });
                     }
                 });
@@ -6829,9 +6894,13 @@
                                 const groupId = groupFieldName ? qg[groupFieldName] : null;
                                 if (groupId && !processedGroupIds.has(groupId)) {
                                     processedGroupIds.add(groupId);
+                                    const raw1 = qg.imd_displayorderquotegroup;
+                                    const ord1 = raw1 !== null && raw1 !== undefined && raw1 !== '' ? parseInt(raw1, 10) : null;
                                     groupsWithQuoteGroups.push({
                                         imd_groupid: groupId,
-                                        imd_name: qg.imd_name || 'Unknown Group'
+                                        imd_name: qg.imd_name || 'Unknown Group',
+                                        _imd_quotegroupid: qg.imd_quotegroupid || null,
+                                        _displayOrderQuoteGroup: isNaN(ord1) ? null : ord1
                                     });
                                 }
                             });
@@ -6839,8 +6908,13 @@
                     }
                 }
                 
-                // Sort by name
-                groupsWithQuoteGroups.sort((a, b) => (a.imd_name || '').localeCompare(b.imd_name || ''));
+                // Sort by quote group display order, then name
+                groupsWithQuoteGroups.sort((a, b) => {
+                    const na = (a._displayOrderQuoteGroup != null && !isNaN(+a._displayOrderQuoteGroup)) ? +a._displayOrderQuoteGroup : 999999;
+                    const nb = (b._displayOrderQuoteGroup != null && !isNaN(+b._displayOrderQuoteGroup)) ? +b._displayOrderQuoteGroup : 999999;
+                    if (na !== nb) return na - nb;
+                    return (a.imd_name || '').localeCompare(b.imd_name || '');
+                });
                 
                 // Populate dropdown with groups that have quote groups (only quote groups, no fallback to all groups)
                 groupsWithQuoteGroups.forEach(group => {
@@ -6849,6 +6923,12 @@
                     option.textContent = group.imd_name || 'Unnamed Group';
                     dropdown.appendChild(option);
                 });
+
+                // Keep the per-quote cache aligned so reorder list uses same objects
+                allGroupsMap[quoteId] = groupsWithQuoteGroups;
+                if (currentRecordId && String(currentRecordId) === String(quoteId)) {
+                    allGroups = groupsWithQuoteGroups;
+                }
                 
                 // Update status badge
                 const statusBadge = document.getElementById('group-status');
@@ -6901,6 +6981,8 @@
                 };
             }
             updateRenameGroupButtonState();
+            updateDeleteGroupButtonState();
+            renderQuoteGroupOrderList();
         }
 
         function updateRenameGroupButtonState() {
@@ -6913,6 +6995,185 @@
             const hasName = g && (g.imd_name || '').trim().length > 0;
             renameBtn.disabled = groups.length === 0 || !gid || !hasName;
         }
+
+        function sortGroupsByQuoteGroupOrderForQuote(quoteId) {
+            const qid = String(quoteId || '');
+            const groups = allGroupsMap[qid] || [];
+            if (!Array.isArray(groups) || groups.length === 0) return;
+            groups.sort((a, b) => {
+                const na = (a && a._displayOrderQuoteGroup != null && !isNaN(+a._displayOrderQuoteGroup)) ? +a._displayOrderQuoteGroup : 999999;
+                const nb = (b && b._displayOrderQuoteGroup != null && !isNaN(+b._displayOrderQuoteGroup)) ? +b._displayOrderQuoteGroup : 999999;
+                if (na !== nb) return na - nb;
+                return (a.imd_name || '').localeCompare(b.imd_name || '');
+            });
+            allGroupsMap[qid] = groups;
+            if (currentRecordId && String(currentRecordId) === qid) {
+                allGroups = groups;
+            }
+        }
+
+        function updateDeleteGroupButtonState() {
+            const delBtn = document.getElementById('delete-group-btn');
+            const dropdown = document.getElementById('group-dropdown');
+            if (!delBtn || !dropdown || !currentRecordId) return;
+            const groups = allGroupsMap[currentRecordId] || [];
+            const gid = dropdown.value;
+            delBtn.disabled = groups.length === 0 || !gid;
+        }
+
+        async function persistQuoteGroupDisplayOrdersForCurrentQuote() {
+            if (!currentRecordId) return;
+            const quoteId = String(currentRecordId);
+            const groups = allGroupsMap[quoteId] || [];
+            if (!Array.isArray(groups) || groups.length === 0) return;
+            try {
+                if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.showProgressIndicator === 'function') {
+                    window.parent.Xrm.Utility.showProgressIndicator('Saving phase order...');
+                }
+            } catch (e) { /* ignore */ }
+            try {
+                for (let i = 0; i < groups.length; i++) {
+                    const g = groups[i];
+                    const qgid = g && g._imd_quotegroupid;
+                    if (!qgid) continue;
+                    const ord = i + 1;
+                    g._displayOrderQuoteGroup = ord;
+                    try {
+                        await window.parent.Xrm.WebApi.updateRecord('imd_quotegroup', qgid, { imd_displayorderquotegroup: ord });
+                    } catch (e) {
+                        console.warn('[QuoteGroupOrder] Failed to update imd_displayorderquotegroup for', qgid, e);
+                    }
+                }
+                sortGroupsByQuoteGroupOrderForQuote(quoteId);
+            } finally {
+                try {
+                    if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.closeProgressIndicator === 'function') {
+                        window.parent.Xrm.Utility.closeProgressIndicator();
+                    }
+                } catch (e) { /* ignore */ }
+            }
+        }
+
+        function renderQuoteGroupOrderList() {
+            const section = document.getElementById('quote-group-order-section');
+            const ul = document.getElementById('quote-group-order-list');
+            if (!section || !ul || !currentRecordId) return;
+            const quoteId = String(currentRecordId);
+            const groups = allGroupsMap[quoteId] || [];
+            if (!Array.isArray(groups) || groups.length === 0) {
+                section.style.display = 'none';
+                ul.innerHTML = '';
+                return;
+            }
+            section.style.display = 'block';
+            sortGroupsByQuoteGroupOrderForQuote(quoteId);
+            ul.innerHTML = '';
+            groups.forEach(g => {
+                const li = document.createElement('li');
+                li.setAttribute('role', 'listitem');
+                li.dataset.groupid = g.imd_groupid;
+                const handle = document.createElement('span');
+                handle.className = 'quote-group-drag-handle';
+                handle.setAttribute('draggable', 'true');
+                handle.setAttribute('title', 'Drag to reorder phase');
+                handle.setAttribute('aria-label', 'Drag to reorder phase');
+                handle.textContent = '☰';
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = g.imd_name || 'Unnamed Group';
+                li.appendChild(handle);
+                li.appendChild(nameSpan);
+                ul.appendChild(li);
+            });
+        }
+
+        function moveQuoteGroupInCurrentQuoteList(draggedGroupId, targetGroupId, insertAfter) {
+            if (!currentRecordId) return false;
+            const quoteId = String(currentRecordId);
+            const groups = allGroupsMap[quoteId] || [];
+            if (!draggedGroupId || !Array.isArray(groups)) return false;
+            const fromIdx = groups.findIndex(g => String(g.imd_groupid) === String(draggedGroupId));
+            if (fromIdx === -1) return false;
+            const [item] = groups.splice(fromIdx, 1);
+            if (!targetGroupId) {
+                groups.push(item);
+            } else {
+                let toIdx = groups.findIndex(g => String(g.imd_groupid) === String(targetGroupId));
+                if (toIdx === -1) {
+                    groups.push(item);
+                } else {
+                    if (insertAfter) toIdx += 1;
+                    groups.splice(toIdx, 0, item);
+                }
+            }
+            allGroupsMap[quoteId] = groups;
+            allGroups = groups;
+            return true;
+        }
+
+        (function attachQuoteGroupOrderDnDOnce() {
+            if (window._quoteGroupOrderDnDAttached) return;
+            window._quoteGroupOrderDnDAttached = true;
+            const state = { groupId: null };
+
+            const clearMarks = (root) => {
+                (root || document).querySelectorAll('#quote-group-order-list li.drop-before, #quote-group-order-list li.drop-after').forEach(li => {
+                    li.classList.remove('drop-before', 'drop-after');
+                });
+            };
+
+            document.addEventListener('dragstart', (e) => {
+                const h = e.target && e.target.closest ? e.target.closest('.quote-group-drag-handle') : null;
+                if (!h) return;
+                const li = h.closest('#quote-group-order-list li');
+                if (!li || !li.dataset.groupid) return;
+                state.groupId = li.dataset.groupid;
+                li.classList.add('dragging');
+                try {
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', state.groupId);
+                } catch (err) { /* ignore */ }
+            });
+
+            document.addEventListener('dragend', (e) => {
+                const li = e.target && e.target.closest ? e.target.closest('#quote-group-order-list li') : null;
+                if (li) li.classList.remove('dragging');
+                clearMarks(document.getElementById('quote-group-order-list'));
+                state.groupId = null;
+            });
+
+            document.addEventListener('dragover', (e) => {
+                if (!state.groupId) return;
+                const li = e.target && e.target.closest ? e.target.closest('#quote-group-order-list li') : null;
+                if (!li || li.dataset.groupid === state.groupId) return;
+                e.preventDefault();
+                clearMarks(document.getElementById('quote-group-order-list'));
+                const rect = li.getBoundingClientRect();
+                const before = e.clientY < rect.top + rect.height / 2;
+                li.classList.add(before ? 'drop-before' : 'drop-after');
+            });
+
+            document.addEventListener('drop', async (e) => {
+                if (!state.groupId) return;
+                const li = e.target && e.target.closest ? e.target.closest('#quote-group-order-list li') : null;
+                const ul = document.getElementById('quote-group-order-list');
+                if (!ul) return;
+                e.preventDefault();
+                let targetId = null;
+                let insertAfter = false;
+                if (li && li.dataset.groupid && li.dataset.groupid !== state.groupId) {
+                    targetId = li.dataset.groupid;
+                    insertAfter = li.classList.contains('drop-after');
+                }
+                const moved = moveQuoteGroupInCurrentQuoteList(state.groupId, targetId, insertAfter);
+                clearMarks(ul);
+                if (moved) {
+                    await persistQuoteGroupDisplayOrdersForCurrentQuote();
+                    markQuoteBuilderDirty();
+                    await populateGroupDropdown(currentRecordId);
+                    renderQuoteGroupOrderList();
+                }
+            });
+        })();
 
         async function renameSelectedGroup() {
             const dropdown = document.getElementById('group-dropdown');
@@ -6984,6 +7245,114 @@
                 isRenamingGroup = false;
                 if (saveRenameBtn) saveRenameBtn.disabled = false;
                 updateRenameGroupButtonState();
+                updateDeleteGroupButtonState();
+                renderQuoteGroupOrderList();
+            }
+        }
+
+        async function deleteSelectedQuoteGroupAndLines() {
+            const dropdown = document.getElementById('group-dropdown');
+            if (!currentRecordId || !dropdown) return;
+            const quoteId = String(currentRecordId);
+            const groupId = dropdown.value;
+            if (!groupId) {
+                alert('Please select a phase/group to delete.');
+                return;
+            }
+            const groups = allGroupsMap[quoteId] || [];
+            const g = groups.find(x => String(x.imd_groupid) === String(groupId));
+            const nm = ((g && g.imd_name) ? g.imd_name : 'this phase').trim() || 'this phase';
+
+            // Find the imd_quotegroup record id for this quote + group
+            let quoteGroupId = (g && g._imd_quotegroupid) ? g._imd_quotegroupid : null;
+            if (!quoteGroupId && quoteGroupIdToGroupIdMap[quoteId]) {
+                for (const [qgId, gid] of Object.entries(quoteGroupIdToGroupIdMap[quoteId])) {
+                    if (String(gid) === String(groupId)) {
+                        quoteGroupId = qgId;
+                        break;
+                    }
+                }
+            }
+            if (!quoteGroupId) {
+                try {
+                    const groupFieldName = await detectGroupLookupFieldName();
+                    const res = await window.parent.Xrm.WebApi.retrieveMultipleRecords(
+                        'imd_quotegroup',
+                        `?$filter=_imd_quote_value eq ${quoteId} and ${groupFieldName} eq ${groupId}&$select=imd_quotegroupid`
+                    );
+                    if (res.entities.length > 0) {
+                        quoteGroupId = res.entities[0].imd_quotegroupid;
+                    }
+                } catch (e) {
+                    // ignore and continue
+                }
+            }
+
+            if (!window.confirm(`Delete "${nm}" from this quote?\n\nAll quote lines (quotedetails) in this phase will be permanently removed.`)) {
+                return;
+            }
+
+            try {
+                if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.showProgressIndicator === 'function') {
+                    window.parent.Xrm.Utility.showProgressIndicator('Deleting phase and quote lines...');
+                }
+            } catch (e) { /* ignore */ }
+
+            try {
+                if (quoteGroupId) {
+                    const details = await window.parent.Xrm.WebApi.retrieveMultipleRecords(
+                        'quotedetail',
+                        `?$filter=_imd_quotegroup_value eq ${quoteGroupId}&$select=quotedetailid`
+                    );
+                    for (const d of details.entities) {
+                        try {
+                            await window.parent.Xrm.WebApi.deleteRecord('quotedetail', d.quotedetailid);
+                        } catch (err) {
+                            console.warn('[DeleteGroup] quotedetail delete failed', d.quotedetailid, err);
+                        }
+                    }
+                    try {
+                        await window.parent.Xrm.WebApi.deleteRecord('imd_quotegroup', quoteGroupId);
+                    } catch (err) {
+                        console.warn('[DeleteGroup] imd_quotegroup delete failed', quoteGroupId, err);
+                    }
+                }
+
+                // Remove from in-memory maps/UI
+                if (selectedProductsMapByGroup[quoteId] && selectedProductsMapByGroup[quoteId][groupId]) {
+                    delete selectedProductsMapByGroup[quoteId][groupId];
+                }
+                if (selectedProductsMap[quoteId]) {
+                    Object.keys(selectedProductsMap[quoteId]).forEach(type => {
+                        selectedProductsMap[quoteId][type] = (selectedProductsMap[quoteId][type] || []).filter(p => String(p.groupId || '') !== String(groupId));
+                    });
+                }
+                if (quoteGroupIdToGroupIdMap[quoteId] && quoteGroupId) {
+                    delete quoteGroupIdToGroupIdMap[quoteId][quoteGroupId];
+                }
+                allGroupsMap[quoteId] = (allGroupsMap[quoteId] || []).filter(x => String(x.imd_groupid) !== String(groupId));
+                if (String(selectedGroupIdMap[quoteId] || '') === String(groupId)) {
+                    delete selectedGroupIdMap[quoteId];
+                    delete selectedGroupNameMap[quoteId];
+                    delete selectedQuoteGroupIdMap[quoteId];
+                    selectedProducts = { '826080000': [], '826080001': [], '826080002': [], '826080003': [], '826080004': [], 'bundles': [] };
+                }
+
+                markQuoteBuilderDirty();
+                sortGroupsByQuoteGroupOrderForQuote(quoteId);
+                await populateGroupDropdown(quoteId);
+                renderQuoteGroupOrderList();
+                populateCart();
+                populateSelectedSummary();
+            } catch (error) {
+                console.error('[DeleteGroup]', error);
+                alert('Could not delete group: ' + (error.message || String(error)));
+            } finally {
+                try {
+                    if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.closeProgressIndicator === 'function') {
+                        window.parent.Xrm.Utility.closeProgressIndicator();
+                    }
+                } catch (e) { /* ignore */ }
             }
         }
         
@@ -7576,22 +7945,32 @@
                 return;
             }
             try {
+                try {
+                    if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.showProgressIndicator === 'function') {
+                        window.parent.Xrm.Utility.showProgressIndicator('Creating new phase...');
+                    }
+                } catch (e) {
+                    // ignore
+                }
                 // Step 1: Create the group (imd_group record)
                 const newGroup = {
                     "imd_name": groupName
                 };
                 const result = await window.parent.Xrm.WebApi.createRecord("imd_group", newGroup);
                 const newGroupId = result.id;
-                const newGroupObj = {
-                    imd_groupid: newGroupId,
-                    imd_name: groupName
-                };
-                
                 // Step 2: Create the quote group (imd_quotegroup record) that links the group to the current quote
                 let quoteGroupId = null;
+                const newGroupObj = {
+                    imd_groupid: newGroupId,
+                    imd_name: groupName,
+                    _imd_quotegroupid: null,
+                    _displayOrderQuoteGroup: null
+                };
+                
                 try {
                     quoteGroupId = await createQuoteGroupRecord(currentRecordId, newGroupId, groupName);
                     console.log(`Successfully created quote group ${quoteGroupId} linking group ${newGroupId} to quote ${currentRecordId}`);
+                    newGroupObj._imd_quotegroupid = quoteGroupId;
                     
                     // Update the quoteGroupIdToGroupIdMap
                     if (!quoteGroupIdToGroupIdMap[currentRecordId]) {
@@ -7628,12 +8007,23 @@
                 document.getElementById('new-group-name').value = '';
                 selectedGroupIdMap[currentRecordId] = newGroupId;
                 selectedGroupNameMap[currentRecordId] = groupName;
+                // Ensure the new group ends up ordered last by default
+                sortGroupsByQuoteGroupOrderForQuote(currentRecordId);
+                renderQuoteGroupOrderList();
                 
                 // Automatically continue to products after creating group (like multi-phase single quote popup)
                 await continueToProducts();
             } catch (error) {
                 console.error("Error creating group:", error);
                 alert("Error creating group: " + error.message);
+            } finally {
+                try {
+                    if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.closeProgressIndicator === 'function') {
+                        window.parent.Xrm.Utility.closeProgressIndicator();
+                    }
+                } catch (e) {
+                    // ignore
+                }
             }
         }
         
@@ -8808,6 +9198,7 @@
             const annual = productData?.productid.imd_annual || 1;
             const chargeableItemType = productData?.productid.imd_chargeableitemtype || null;
             const statecode = productData?.productid.statecode !== undefined ? productData.productid.statecode : 0;
+            const imd_inactive = productData?.productid.imd_inactive === true;
             if (checkbox.checked) {
                 // Check if product is already selected
                 // Since selectedProducts already points to current group's products (for multi-phase) or all products (for regular), just check if it exists
@@ -8866,7 +9257,8 @@
                             subscriptionType: productData?.productid.imd_subscriptiontype || null,
                             isDirty: true,
                             quoteId: currentRecordId, // Track which quote this belongs to
-                            statecode: statecode // Product status: 0=Active, 1=Retired, 2=Draft, 3=Under Revision
+                            statecode: statecode, // Product status: 0=Active, 1=Retired, 2=Draft, 3=Under Revision
+                            imd_inactive: imd_inactive
                         };
                     } else {
                         newProduct = {
@@ -8888,7 +9280,8 @@
                             isDirty: true,
                             quoteId: currentRecordId, // Track which quote this belongs to
                             groupId: (quoteTypeMap[currentRecordId] === 826080001 && selectedGroupIdMap[currentRecordId]) ? selectedGroupIdMap[currentRecordId] : null, // Track which group this belongs to (for multi-phase quotes)
-                            statecode: statecode // Product status: 0=Active, 1=Retired, 2=Draft, 3=Under Revision
+                            statecode: statecode, // Product status: 0=Active, 1=Retired, 2=Draft, 3=Under Revision
+                            imd_inactive: imd_inactive
                         };
                         if (activeProductType == 826080004) {
                             newProduct.time = time;
@@ -9016,7 +9409,8 @@
                             isDirty: true,
                             quoteId: currentRecordId, // Track which quote this belongs to
                             groupId: (quoteTypeMap[currentRecordId] === 826080001 && selectedGroupIdMap[currentRecordId]) ? selectedGroupIdMap[currentRecordId] : null, // Track which group this belongs to (for multi-phase quotes)
-                            statecode: childStatecode // Product status: 0=Active, 1=Retired, 2=Draft, 3=Under Revision
+                            statecode: childStatecode, // Product status: 0=Active, 1=Retired, 2=Draft, 3=Under Revision
+                            imd_inactive: childProd.productid.imd_inactive === true
                         };
                         if (childType === 826080004) {
                             newChild.time = childProd.productid.imd_time || 0;
@@ -9097,7 +9491,8 @@
                 isDirty: true,
                 quoteId: currentRecordId, // Track which quote this belongs to
                 groupId: targetGroupId, // Track which group this belongs to (for multi-phase quotes)
-                statecode: 0 // Manual write-in items default to Active
+                statecode: 0, // Manual write-in items default to Active
+                imd_inactive: false
             };
             
             // For multi-phase quotes, ensure we're adding to the correct group-specific array
@@ -13823,6 +14218,14 @@
                 return;
             }
 
+            try {
+                if (window.parent && window.parent.Xrm && window.parent.Xrm.Utility && typeof window.parent.Xrm.Utility.showProgressIndicator === 'function') {
+                    window.parent.Xrm.Utility.showProgressIndicator('Quote saving in progress...');
+                }
+            } catch (e) {
+                // ignore
+            }
+
             // First, save current quote's changes to the map if there is one
             if (currentRecordId) {
                 await saveCurrentQuoteChanges(false);
@@ -14084,6 +14487,11 @@
             if (e.key === 'Enter' && !isRenamingGroup) {
                 renameSelectedGroup();
             }
+        });
+
+        document.getElementById('delete-group-btn').addEventListener('click', function() {
+            if (!currentRecordId) return;
+            deleteSelectedQuoteGroupAndLines();
         });
         
         document.getElementById('save-group-btn').addEventListener('click', async function () {
